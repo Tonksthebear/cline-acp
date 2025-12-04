@@ -448,7 +448,10 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
 function mapToolKind(
   toolType: string,
 ): "read" | "edit" | "execute" | "search" | "fetch" | "think" | "other" {
-  const kindMap: Record<string, "read" | "edit" | "execute" | "search" | "fetch" | "think" | "other"> = {
+  const kindMap: Record<
+    string,
+    "read" | "edit" | "execute" | "search" | "fetch" | "think" | "other"
+  > = {
     read_file: "read",
     write_to_file: "edit",
     replace_in_file: "edit",
@@ -751,9 +754,9 @@ export function isWaitingForUserInput(messages: ClineMessage[]): boolean {
 
   // These ask types mean Cline is waiting for user response
   const waitingTypes = [
-    "plan_mode_respond",   // Plan mode - waiting for user to approve/respond
-    "followup",            // Asking follow-up question
-    "completion_result",   // Task completed, asking if satisfied
+    "plan_mode_respond", // Plan mode - waiting for user to approve/respond
+    "followup", // Asking follow-up question
+    "completion_result", // Task completed, asking if satisfied
   ];
 
   if (msgType === "ask" && waitingTypes.includes(askType)) {
@@ -812,8 +815,12 @@ export function extractMessagesFromState(stateJson: string): ClineMessage[] {
       partial: msg.partial as boolean | undefined,
       images: msg.images as string[] | undefined,
       // Include the structured response fields
-      planModeResponse: msg.planModeResponse as { response: string; options: string[]; selected?: string } | undefined,
-      askQuestion: msg.askQuestion as { question: string; options: string[]; selected?: string } | undefined,
+      planModeResponse: msg.planModeResponse as
+        | { response: string; options: string[]; selected?: string }
+        | undefined,
+      askQuestion: msg.askQuestion as
+        | { question: string; options: string[]; selected?: string }
+        | undefined,
     }));
   } catch {
     return [];

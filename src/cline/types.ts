@@ -214,8 +214,8 @@ export interface ClineToolInfo {
   input: Record<string, unknown>;
   path?: string;
   line?: number;
-  content?: string;  // Tool output or file content
-  diff?: string;     // Diff for file edit operations
+  content?: string; // Tool output or file content
+  diff?: string; // Diff for file edit operations
 }
 
 // Cost info extracted from api_req_started messages

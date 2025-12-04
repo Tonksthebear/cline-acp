@@ -129,7 +129,9 @@ export class ClineProcessManager {
           };
           return this.instance;
         } else if (this.options.verbose) {
-          console.log(`Existing instance at ${instance.address} is not reachable, creating new one...`);
+          console.log(
+            `Existing instance at ${instance.address} is not reachable, creating new one...`,
+          );
         }
       }
     }

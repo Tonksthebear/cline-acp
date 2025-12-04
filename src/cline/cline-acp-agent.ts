@@ -200,9 +200,7 @@ export class ClineAcpAgent implements Agent {
 
         // Get the current provider and model
         const provider = apiConfig.planModeApiProvider || "cline";
-        const modelId = apiConfig.planModeOpenRouterModelId ||
-                        apiConfig.apiModelId ||
-                        provider;
+        const modelId = apiConfig.planModeOpenRouterModelId || apiConfig.apiModelId || provider;
 
         currentModelId = modelId;
 
@@ -222,7 +220,7 @@ export class ClineAcpAgent implements Agent {
             "x-ai/grok-3-mini-beta",
           ];
           for (const model of commonModels) {
-            if (!availableModels.find(m => m.modelId === model)) {
+            if (!availableModels.find((m) => m.modelId === model)) {
               availableModels.push({
                 modelId: model,
                 name: this.formatModelName(model),
@@ -270,7 +268,7 @@ export class ClineAcpAgent implements Agent {
     // Convert kebab-case to Title Case
     return name
       .split("-")
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
   }
 
@@ -363,9 +361,7 @@ export class ClineAcpAgent implements Agent {
     }
   }
 
-  async setSessionModel(
-    params: SetSessionModelRequest,
-  ): Promise<SetSessionModelResponse | void> {
+  async setSessionModel(params: SetSessionModelRequest): Promise<SetSessionModelResponse | void> {
     if (this.clineClient) {
       await this.clineClient.State.updateSettings({
         apiConfiguration: {
@@ -375,9 +371,7 @@ export class ClineAcpAgent implements Agent {
     }
   }
 
-  async setSessionMode(
-    params: SetSessionModeRequest,
-  ): Promise<SetSessionModeResponse> {
+  async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
     const session = this.sessions[params.sessionId];
     if (!session) {
       throw new Error(`Session not found: ${params.sessionId}`);
@@ -422,11 +416,18 @@ export class ClineAcpAgent implements Agent {
   ): Promise<void> {
     const session = this.sessions[sessionId];
     if (!session || session.cancelled || !this.clineClient) {
-      this.log("processStreamingResponses: early exit", { session: !!session, cancelled: session?.cancelled, clineClient: !!this.clineClient });
+      this.log("processStreamingResponses: early exit", {
+        session: !!session,
+        cancelled: session?.cancelled,
+        clineClient: !!this.clineClient,
+      });
       return;
     }
 
-    this.log("processStreamingResponses: starting", { sessionId, existingTimestampsCount: existingTimestamps.size });
+    this.log("processStreamingResponses: starting", {
+      sessionId,
+      existingTimestampsCount: existingTimestamps.size,
+    });
 
     // Subscribe to state updates - this gives us complete messages
     const stateStream = this.clineClient.State.subscribeToState();
@@ -466,7 +467,10 @@ export class ClineAcpAgent implements Agent {
 
         const messages = extractMessagesFromState(state.stateJson || "{}");
         const workspaceRoot = extractWorkspaceRoot(state.stateJson || "{}");
-        this.log(`State update #${stateUpdateCount}:`, { messageCount: messages.length, workspaceRoot });
+        this.log(`State update #${stateUpdateCount}:`, {
+          messageCount: messages.length,
+          workspaceRoot,
+        });
 
         // Check for mode changes and emit current_mode_update notifications
         const newMode = extractMode(state.stateJson || "{}");
@@ -522,11 +526,23 @@ export class ClineAcpAgent implements Agent {
             const sayType = String(msg.say || "").toLowerCase();
 
             // For partial say:tool messages, emit as in_progress if not already done
-            if (msgType === "say" && sayType === "tool" && msg.ts && !inProgressToolCalls.has(msg.ts)) {
-              const inProgressNotification = clineSayToolToAcpToolCallInProgress(msg, sessionId, workspaceRoot);
+            if (
+              msgType === "say" &&
+              sayType === "tool" &&
+              msg.ts &&
+              !inProgressToolCalls.has(msg.ts)
+            ) {
+              const inProgressNotification = clineSayToolToAcpToolCallInProgress(
+                msg,
+                sessionId,
+                workspaceRoot,
+              );
               if (inProgressNotification) {
                 inProgressToolCalls.add(msg.ts);
-                this.log("Emitting in_progress tool_call:", JSON.stringify(inProgressNotification.update, null, 2));
+                this.log(
+                  "Emitting in_progress tool_call:",
+                  JSON.stringify(inProgressNotification.update, null, 2),
+                );
                 await this.client.sessionUpdate(inProgressNotification);
               }
             }
@@ -565,12 +581,20 @@ export class ClineAcpAgent implements Agent {
           // Check if this is a tool message that was previously emitted as in_progress
           // If so, emit a full tool_call with completed status (not just tool_call_update)
           // because we now have the complete path and can include proper locations
-          if (msgType === "say" && sayType === "tool" && msg.ts && inProgressToolCalls.has(msg.ts)) {
+          if (
+            msgType === "say" &&
+            sayType === "tool" &&
+            msg.ts &&
+            inProgressToolCalls.has(msg.ts)
+          ) {
             // This tool was already emitted as in_progress, now emit the completed version
             // with proper locations (the path is now complete since msg is no longer partial)
             const completedNotification = clineSayToolToAcpToolCall(msg, sessionId, workspaceRoot);
             if (completedNotification) {
-              this.log("Emitting completed tool_call (was in_progress):", JSON.stringify(completedNotification.update, null, 2));
+              this.log(
+                "Emitting completed tool_call (was in_progress):",
+                JSON.stringify(completedNotification.update, null, 2),
+              );
               await this.client.sessionUpdate(completedNotification);
             }
             inProgressToolCalls.delete(msg.ts); // Clean up
@@ -582,7 +606,10 @@ export class ClineAcpAgent implements Agent {
           if (notification) {
             // Log tool_call notifications for debugging file navigation
             if (notification.update.sessionUpdate === "tool_call") {
-              this.log("Emitting tool_call notification:", JSON.stringify(notification.update, null, 2));
+              this.log(
+                "Emitting tool_call notification:",
+                JSON.stringify(notification.update, null, 2),
+              );
             }
             await this.client.sessionUpdate(notification);
           }
@@ -596,7 +623,14 @@ export class ClineAcpAgent implements Agent {
           const msgType = String(lastMessage.type || "").toLowerCase();
           const askType = String(lastMessage.ask || "").toLowerCase();
           const sayType = String(lastMessage.say || "").toLowerCase();
-          this.log(`Last message:`, { ts: lastMessage.ts, type: msgType, ask: askType, say: sayType, partial: lastMessage.partial, isNew: lastMessageIsNew });
+          this.log(`Last message:`, {
+            ts: lastMessage.ts,
+            type: msgType,
+            ask: askType,
+            say: sayType,
+            partial: lastMessage.partial,
+            isNew: lastMessageIsNew,
+          });
         }
 
         // Check if task needs approval (only for new messages we haven't already handled)
@@ -636,14 +670,14 @@ export class ClineAcpAgent implements Agent {
     this.log("processStreamingResponses: finished");
   }
 
-  private async handleApprovalRequest(
-    sessionId: string,
-    messages: ClineMessage[],
-  ): Promise<void> {
+  private async handleApprovalRequest(sessionId: string, messages: ClineMessage[]): Promise<void> {
     const lastMessage = messages[messages.length - 1];
     const toolInfo = parseToolInfo(lastMessage);
 
-    this.log("handleApprovalRequest: requesting permission", { tool: toolInfo.type, title: toolInfo.title });
+    this.log("handleApprovalRequest: requesting permission", {
+      tool: toolInfo.type,
+      title: toolInfo.title,
+    });
 
     // Request permission from ACP client
     const response = await this.client.requestPermission({

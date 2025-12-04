@@ -23,9 +23,9 @@ const __dirname = path.dirname(__filename);
 function findProtoDir(): string {
   // Try relative path first (works when proto/ is at package root)
   const candidates = [
-    path.join(__dirname, "../../proto"),      // from dist/cline/
-    path.join(__dirname, "../proto"),         // from dist/
-    path.join(process.cwd(), "proto"),        // from cwd
+    path.join(__dirname, "../../proto"), // from dist/cline/
+    path.join(__dirname, "../proto"), // from dist/
+    path.join(process.cwd(), "proto"), // from cwd
   ];
 
   for (const candidate of candidates) {
@@ -165,23 +165,11 @@ export async function createClineClient(address: string): Promise<ClineClient> {
   const protoDir = path.join(PROTO_DIR, "cline");
 
   // Load service clients
-  const taskClient = loadProtoClient(
-    path.join(protoDir, "task.proto"),
-    "TaskService",
-    address,
-  );
+  const taskClient = loadProtoClient(path.join(protoDir, "task.proto"), "TaskService", address);
 
-  const stateClient = loadProtoClient(
-    path.join(protoDir, "state.proto"),
-    "StateService",
-    address,
-  );
+  const stateClient = loadProtoClient(path.join(protoDir, "state.proto"), "StateService", address);
 
-  const uiClient = loadProtoClient(
-    path.join(protoDir, "ui.proto"),
-    "UiService",
-    address,
-  );
+  const uiClient = loadProtoClient(path.join(protoDir, "ui.proto"), "UiService", address);
 
   return {
     Task: {
@@ -211,7 +199,11 @@ export async function createClineClient(address: string): Promise<ClineClient> {
     State: {
       subscribeToState(): AsyncIterableStream<StateUpdate> {
         return streamToAsyncIterable(() =>
-          (stateClient.subscribeToState as (req: Record<string, never>) => grpc.ClientReadableStream<StateUpdate>)({}),
+          (
+            stateClient.subscribeToState as (
+              req: Record<string, never>,
+            ) => grpc.ClientReadableStream<StateUpdate>
+          )({}),
         );
       },
 
@@ -247,7 +239,10 @@ export async function createClineClient(address: string): Promise<ClineClient> {
         const response = await promisifyUnary<
           Record<string, never>,
           { processId: number; version?: string }
-        >(stateClient, "getProcessInfo")({});
+        >(
+          stateClient,
+          "getProcessInfo",
+        )({});
         return { pid: response.processId, address };
       },
     },
@@ -255,7 +250,11 @@ export async function createClineClient(address: string): Promise<ClineClient> {
     Ui: {
       subscribeToPartialMessage(): AsyncIterableStream<ClineMessage> {
         return streamToAsyncIterable(() =>
-          (uiClient.subscribeToPartialMessage as (req: Record<string, never>) => grpc.ClientReadableStream<ClineMessage>)({}),
+          (
+            uiClient.subscribeToPartialMessage as (
+              req: Record<string, never>,
+            ) => grpc.ClientReadableStream<ClineMessage>
+          )({}),
         );
       },
     },

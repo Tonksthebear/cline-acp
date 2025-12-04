@@ -187,7 +187,11 @@ describe("ClineAcpAgent", () => {
       expect(response.models).toBeDefined();
       expect(response.models?.availableModels.length).toBeGreaterThan(0);
       // Cline supports multiple providers
-      expect(response.models?.availableModels.some((m) => m.name.includes("Claude") || m.name.includes("claude"))).toBe(true);
+      expect(
+        response.models?.availableModels.some(
+          (m) => m.name.includes("Claude") || m.name.includes("claude"),
+        ),
+      ).toBe(true);
     });
 
     it("should return available modes", async () => {
@@ -470,9 +474,7 @@ describe("ACP to Cline conversion", () => {
     it("should handle non-file URLs as text", () => {
       const clinePrompt = acpPromptToCline({
         sessionId: "test",
-        prompt: [
-          { type: "resource_link", uri: "https://example.com", name: "example.com" },
-        ],
+        prompt: [{ type: "resource_link", uri: "https://example.com", name: "example.com" }],
       });
 
       expect(clinePrompt.text).toContain("https://example.com");
@@ -1534,7 +1536,10 @@ Just regular text`;
       expect(notification).not.toBeNull();
       expect(notification?.update.sessionUpdate).toBe("plan");
 
-      const update = notification?.update as { sessionUpdate: string; entries: Array<{ content: string; status: string; priority: string }> };
+      const update = notification?.update as {
+        sessionUpdate: string;
+        entries: Array<{ content: string; status: string; priority: string }>;
+      };
       expect(update.entries).toHaveLength(3);
       expect(update.entries[0]).toEqual({
         content: "Set up project",
@@ -2017,9 +2022,7 @@ describe("Streaming Integration Tests", () => {
         {
           stateJson: JSON.stringify({
             mode: "plan",
-            clineMessages: [
-              { ts: 1000, type: "say", say: "text", text: "Starting in plan mode" },
-            ],
+            clineMessages: [{ ts: 1000, type: "say", say: "text", text: "Starting in plan mode" }],
           }),
         },
         // Mode changes to act
@@ -2095,11 +2098,15 @@ describe("Streaming Integration Tests", () => {
       // Find the current_mode_update call
       const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
       const modeUpdateCalls = calls.filter(
-        (call: unknown[]) => (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate === "current_mode_update"
+        (call: unknown[]) =>
+          (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate ===
+          "current_mode_update",
       );
 
       expect(modeUpdateCalls.length).toBe(1);
-      expect((modeUpdateCalls[0][0] as { update: { currentModeId: string } }).update.currentModeId).toBe("act");
+      expect(
+        (modeUpdateCalls[0][0] as { update: { currentModeId: string } }).update.currentModeId,
+      ).toBe("act");
     });
 
     it("should emit current_mode_update when mode changes from act to plan", async () => {
@@ -2107,9 +2114,7 @@ describe("Streaming Integration Tests", () => {
         {
           stateJson: JSON.stringify({
             mode: "act",
-            clineMessages: [
-              { ts: 1000, type: "say", say: "text", text: "Starting in act mode" },
-            ],
+            clineMessages: [{ ts: 1000, type: "say", say: "text", text: "Starting in act mode" }],
           }),
         },
         // Mode changes to plan
@@ -2118,7 +2123,12 @@ describe("Streaming Integration Tests", () => {
             mode: "plan",
             clineMessages: [
               { ts: 1000, type: "say", say: "text", text: "Starting in act mode" },
-              { ts: 1001, type: "ask", ask: "plan_mode_respond", text: JSON.stringify({ response: "Now planning", options: [] }) },
+              {
+                ts: 1001,
+                type: "ask",
+                ask: "plan_mode_respond",
+                text: JSON.stringify({ response: "Now planning", options: [] }),
+              },
             ],
           }),
         },
@@ -2174,11 +2184,15 @@ describe("Streaming Integration Tests", () => {
       // Find the current_mode_update call
       const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
       const modeUpdateCalls = calls.filter(
-        (call: unknown[]) => (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate === "current_mode_update"
+        (call: unknown[]) =>
+          (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate ===
+          "current_mode_update",
       );
 
       expect(modeUpdateCalls.length).toBe(1);
-      expect((modeUpdateCalls[0][0] as { update: { currentModeId: string } }).update.currentModeId).toBe("plan");
+      expect(
+        (modeUpdateCalls[0][0] as { update: { currentModeId: string } }).update.currentModeId,
+      ).toBe("plan");
     });
   });
 
@@ -2281,12 +2295,11 @@ describe("Streaming Integration Tests", () => {
 
       // Find tool_call notifications for the same tool (ts: 1000)
       const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
-      const toolCallUpdates = calls.filter(
-        (call: unknown[]) => {
-          const update = (call[0] as { update?: { sessionUpdate?: string; toolCallId?: string } })?.update;
-          return update?.sessionUpdate === "tool_call" && update?.toolCallId === "1000";
-        }
-      );
+      const toolCallUpdates = calls.filter((call: unknown[]) => {
+        const update = (call[0] as { update?: { sessionUpdate?: string; toolCallId?: string } })
+          ?.update;
+        return update?.sessionUpdate === "tool_call" && update?.toolCallId === "1000";
+      });
 
       // Should have 2 tool_call notifications: one in_progress, one completed
       expect(toolCallUpdates.length).toBe(2);
@@ -2351,7 +2364,10 @@ describe("Streaming Integration Tests", () => {
                 ts: 1002,
                 type: "ask",
                 ask: "plan_mode_respond",
-                text: JSON.stringify({ response: "What would you like me to do instead?", options: [] }),
+                text: JSON.stringify({
+                  response: "What would you like me to do instead?",
+                  options: [],
+                }),
               },
             ],
           }),
@@ -2408,15 +2424,16 @@ describe("Streaming Integration Tests", () => {
 
       // Find tool_call_update with failed status
       const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
-      const failedUpdates = calls.filter(
-        (call: unknown[]) => {
-          const update = (call[0] as { update?: { sessionUpdate?: string; status?: string } })?.update;
-          return update?.sessionUpdate === "tool_call_update" && update?.status === "failed";
-        }
-      );
+      const failedUpdates = calls.filter((call: unknown[]) => {
+        const update = (call[0] as { update?: { sessionUpdate?: string; status?: string } })
+          ?.update;
+        return update?.sessionUpdate === "tool_call_update" && update?.status === "failed";
+      });
 
       expect(failedUpdates.length).toBe(1);
-      expect((failedUpdates[0][0] as { update: { toolCallId: string } }).update.toolCallId).toBe("1000");
+      expect((failedUpdates[0][0] as { update: { toolCallId: string } }).update.toolCallId).toBe(
+        "1000",
+      );
     });
   });
 });

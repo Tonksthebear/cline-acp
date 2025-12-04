@@ -14,96 +14,96 @@ import {
 } from "../cline/index.js";
 
 describe("ClineAcpAgent Integration Tests", () => {
-    let processManager: ClineProcessManager;
-    let address: string;
-    let setupError: Error | null = null;
+  let processManager: ClineProcessManager;
+  let address: string;
+  let setupError: Error | null = null;
 
-    beforeAll(async () => {
-      processManager = new ClineProcessManager({
-        verbose: true,
-        useExisting: true,
-      });
-
-      try {
-        const instance = await processManager.startInstance();
-        address = instance.address;
-
-        if (processManager.isUsingExistingInstance()) {
-          console.log(`Connected to existing Cline instance at ${address}`);
-        } else {
-          console.log(`Created new Cline instance at ${address}`);
-        }
-      } catch (error) {
-        setupError = error instanceof Error ? error : new Error(String(error));
-      }
-    }, 120000);
-
-    afterAll(async () => {
-      if (processManager) {
-        await processManager.stopInstance();
-      }
+  beforeAll(async () => {
+    processManager = new ClineProcessManager({
+      verbose: true,
+      useExisting: true,
     });
 
-    // Helper to check if we can run tests
-    function requireClineInstance() {
-      if (setupError) {
-        throw new Error(
-          `No Cline instance available. Start one with: cline instance new\n\n` +
-          `Original error: ${setupError.message}`
-        );
+    try {
+      const instance = await processManager.startInstance();
+      address = instance.address;
+
+      if (processManager.isUsingExistingInstance()) {
+        console.log(`Connected to existing Cline instance at ${address}`);
+      } else {
+        console.log(`Created new Cline instance at ${address}`);
       }
+    } catch (error) {
+      setupError = error instanceof Error ? error : new Error(String(error));
+    }
+  }, 120000);
+
+  afterAll(async () => {
+    if (processManager) {
+      await processManager.stopInstance();
+    }
+  });
+
+  // Helper to check if we can run tests
+  function requireClineInstance() {
+    if (setupError) {
+      throw new Error(
+        `No Cline instance available. Start one with: cline instance new\n\n` +
+          `Original error: ${setupError.message}`,
+      );
+    }
+  }
+
+  it("should connect to Cline gRPC server", async () => {
+    requireClineInstance();
+    const client = await createClineClient(address);
+    const info = await client.State.getProcessInfo();
+    expect(info.pid).toBeGreaterThan(0);
+    expect(info.address).toBe(address);
+  });
+
+  it("should create a new task", async () => {
+    requireClineInstance();
+    const client = await createClineClient(address);
+    const taskId = await client.Task.newTask({
+      text: "Hello, this is a test task",
+      images: [],
+      files: [],
+    });
+    expect(taskId).toBeDefined();
+    expect(typeof taskId).toBe("string");
+  });
+
+  it("should subscribe to state updates", async () => {
+    requireClineInstance();
+    const client = await createClineClient(address);
+    const stateStream = client.State.subscribeToState();
+
+    let stateReceived = false;
+    for await (const state of stateStream) {
+      expect(state.stateJson).toBeDefined();
+      stateReceived = true;
+      break;
     }
 
-    it("should connect to Cline gRPC server", async () => {
-      requireClineInstance();
-      const client = await createClineClient(address);
-      const info = await client.State.getProcessInfo();
-      expect(info.pid).toBeGreaterThan(0);
-      expect(info.address).toBe(address);
+    expect(stateReceived).toBe(true);
+  });
+
+  it("should toggle plan/act mode", async () => {
+    requireClineInstance();
+    const client = await createClineClient(address);
+
+    await client.State.togglePlanActModeProto({
+      metadata: {},
+      mode: "act" as any,
     });
 
-    it("should create a new task", async () => {
-      requireClineInstance();
-      const client = await createClineClient(address);
-      const taskId = await client.Task.newTask({
-        text: "Hello, this is a test task",
-        images: [],
-        files: [],
-      });
-      expect(taskId).toBeDefined();
-      expect(typeof taskId).toBe("string");
-    });
-
-    it("should subscribe to state updates", async () => {
-      requireClineInstance();
-      const client = await createClineClient(address);
-      const stateStream = client.State.subscribeToState();
-
-      let stateReceived = false;
-      for await (const state of stateStream) {
-        expect(state.stateJson).toBeDefined();
-        stateReceived = true;
-        break;
-      }
-
-      expect(stateReceived).toBe(true);
-    });
-
-    it("should toggle plan/act mode", async () => {
-      requireClineInstance();
-      const client = await createClineClient(address);
-
-      await client.State.togglePlanActModeProto({
-        metadata: {},
-        mode: "act" as any,
-      });
-
-      await client.State.togglePlanActModeProto({
-        metadata: {},
-        mode: "plan" as any,
-      });
+    await client.State.togglePlanActModeProto({
+      metadata: {},
+      mode: "plan" as any,
     });
   });
+});
 
 // Unit tests for ClineProcessManager
 describe("ClineProcessManager Unit Tests", () => {

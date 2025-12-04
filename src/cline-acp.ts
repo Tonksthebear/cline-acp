@@ -18,15 +18,12 @@ export function runClineAcp() {
     process.env.CLINE_ACP_DEBUG === "true";
 
   const stream = ndJsonStream(input, output);
-  new AgentSideConnection(
-    (client) => {
-      const agent = new ClineAcpAgent({
-        verbose,
-        // autoStart and useExisting default to true
-      });
-      agent.setClient(client);
-      return agent;
-    },
-    stream,
-  );
+  new AgentSideConnection((client) => {
+    const agent = new ClineAcpAgent({
+      verbose,
+      // autoStart and useExisting default to true
+    });
+    agent.setClient(client);
+    return agent;
+  }, stream);
 }
