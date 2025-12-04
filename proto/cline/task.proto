@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package cline;
+
+import "cline/common.proto";
+
+option go_package = "github.com/cline/grpc-go/cline";
+option java_multiple_files = true;
+option java_package = "bot.cline.proto";
+
+service TaskService {
+  rpc cancelTask(EmptyRequest) returns (Empty);
+  rpc cancelBackgroundCommand(EmptyRequest) returns (Empty);
+  rpc clearTask(EmptyRequest) returns (Empty);
+  rpc getTotalTasksSize(EmptyRequest) returns (Int64);
+  rpc deleteTasksWithIds(StringArrayRequest) returns (Empty);
+  rpc newTask(NewTaskRequest) returns (String);
+  rpc showTaskWithId(StringRequest) returns (TaskResponse);
+  rpc exportTaskWithId(StringRequest) returns (Empty);
+  rpc toggleTaskFavorite(TaskFavoriteRequest) returns (Empty);
+  rpc getTaskHistory(GetTaskHistoryRequest) returns (TaskHistoryArray);
+  rpc askResponse(AskResponseRequest) returns (Empty);
+  rpc taskFeedback(StringRequest) returns (Empty);
+  rpc taskCompletionViewChanges(Int64Request) returns (Empty);
+  rpc executeQuickWin(ExecuteQuickWinRequest) returns (Empty);
+  rpc deleteAllTaskHistory(EmptyRequest) returns (DeleteAllTaskHistoryCount);
+}
+
+message NewTaskRequest {
+  Metadata metadata = 1;
+  string text = 2;
+  repeated string images = 3;
+  repeated string files = 4;
+}
+
+message TaskFavoriteRequest {
+  Metadata metadata = 1;
+  string task_id = 2;
+  bool is_favorited = 3;
+}
+
+message TaskResponse {
+  string id = 1;
+  string task = 2;
+  int64 ts = 3;
+  bool is_favorited = 4;
+  int64 size = 5;
+  double total_cost = 6;
+  int32 tokens_in = 7;
+  int32 tokens_out = 8;
+  int32 cache_writes = 9;
+  int32 cache_reads = 10;
+  string model_id = 11;
+}
+
+message GetTaskHistoryRequest {
+  Metadata metadata = 1;
+  bool favorites_only = 2;
+  string search_query = 3;
+  string sort_by = 4;
+  bool current_workspace_only = 5;
+}
+
+message TaskHistoryArray {
+  repeated TaskItem tasks = 1;
+  int32 total_count = 2;
+}
+
+message TaskItem {
+  string id = 1;
+  string task = 2;
+  int64 ts = 3;
+  bool is_favorited = 4;
+  int64 size = 5;
+  double total_cost = 6;
+  int32 tokens_in = 7;
+  int32 tokens_out = 8;
+  int32 cache_writes = 9;
+  int32 cache_reads = 10;
+  string model_id = 11;
+}
+
+message AskResponseRequest {
+  Metadata metadata = 1;
+  string response_type = 2;
+  string text = 3;
+  repeated string images = 4;
+  repeated string files = 5;
+}
+
+message ExecuteQuickWinRequest {
+  Metadata metadata = 1;
+  string command = 2;
+  string title = 3;
+}
+
+message DeleteAllTaskHistoryCount {
+  int32 tasks_deleted = 1;
+}

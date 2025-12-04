@@ -1,0 +1,80 @@
+syntax = "proto3";
+package cline;
+
+import "cline/common.proto";
+
+option go_package = "github.com/cline/grpc-go/cline";
+option java_multiple_files = true;
+option java_package = "bot.cline.proto";
+
+service StateService {
+  rpc getLatestState(EmptyRequest) returns (State);
+  rpc subscribeToState(EmptyRequest) returns (stream State);
+  rpc togglePlanActModeProto(TogglePlanActModeRequest) returns (Boolean);
+  rpc updateAutoApprovalSettings(AutoApprovalSettingsRequest) returns (Empty);
+  rpc updateSettings(UpdateSettingsRequest) returns (Empty);
+  rpc getProcessInfo(EmptyRequest) returns (ProcessInfo);
+  rpc resetState(ResetStateRequest) returns (Empty);
+}
+
+message AutoApprovalActions {
+  optional bool read_files = 1;
+  optional bool read_files_externally = 2;
+  optional bool edit_files = 3;
+  optional bool edit_files_externally = 4;
+  optional bool execute_safe_commands = 5;
+  optional bool execute_all_commands = 6;
+  optional bool use_browser = 7;
+  optional bool use_mcp = 8;
+}
+
+message AutoApprovalSettings {
+  int32 version = 1;
+  AutoApprovalActions actions = 2;
+  optional bool enable_notifications = 3;
+}
+
+message State {
+  string state_json = 1;
+}
+
+message TogglePlanActModeRequest {
+  Metadata metadata = 1;
+  PlanActMode mode = 2;
+  optional ChatContent chat_content = 3;
+}
+
+enum PlanActMode {
+  PLAN = 0;
+  ACT = 1;
+}
+
+message ChatContent {
+  optional string message = 1;
+  repeated string images = 2;
+  repeated string files = 3;
+}
+
+message ResetStateRequest {
+  Metadata metadata = 1;
+  optional bool global = 2;
+}
+
+message AutoApprovalSettingsRequest {
+  Metadata metadata = 1;
+  int32 version = 2;
+  AutoApprovalActions actions = 3;
+  bool enable_notifications = 4;
+}
+
+message UpdateSettingsRequest {
+  Metadata metadata = 1;
+  optional PlanActMode mode = 13;
+  optional bool yolo_mode_toggled = 22;
+}
+
+message ProcessInfo {
+  int32 process_id = 1;
+  optional string version = 2;
+  optional int64 uptime_ms = 3;
+}
