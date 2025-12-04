@@ -7,6 +7,7 @@ import {
   ClineMessage,
   ClinePrompt,
   ClineToolInfo,
+  ClineCostInfo,
   ClineMessageType,
   ClineSay,
   ClineAsk,
@@ -58,11 +59,13 @@ export function acpPromptToCline(prompt: PromptRequest): ClinePrompt {
  * @param sessionId - The ACP session ID
  * @param messageIndex - The index of this message in the message array (0-based)
  *                      Used to skip the first message which is always user's echoed input
+ * @param workspaceRoot - Optional workspace root to resolve relative paths
  */
 export function clineMessageToAcpNotification(
   msg: ClineMessage,
   sessionId: string,
   messageIndex: number = 0,
+  workspaceRoot?: string,
 ): SessionNotification | null {
   // Get type as string (state JSON uses lowercase)
   const msgType = String(msg.type || "").toLowerCase();
@@ -89,7 +92,7 @@ export function clineMessageToAcpNotification(
     // Convert SAY TOOL messages to tool_call notifications for "follow" feature
     // These are auto-approved tool executions - emit them so editor can follow along
     if (sayType === "tool") {
-      return clineSayToolToAcpToolCall(msg, sessionId);
+      return clineSayToolToAcpToolCall(msg, sessionId, workspaceRoot);
     }
 
     // Skip the first say:text message - it's always the user's echoed input
@@ -147,9 +150,14 @@ export function clineMessageToAcpNotification(
       return null;
     }
 
-    // Tool/command permission request
-    if (askType === "tool" || askType === "command") {
-      return clineToolAskToAcpToolCall(msg, sessionId);
+    // Tool permission request (JSON format)
+    if (askType === "tool") {
+      return clineToolAskToAcpToolCall(msg, sessionId, workspaceRoot);
+    }
+
+    // Command execution permission request (raw command text)
+    if (askType === "command") {
+      return clineCommandAskToAcpToolCall(msg, sessionId);
     }
 
     // Task completed - don't emit notification, just let stream end
@@ -320,8 +328,10 @@ export function clinePartialToAcpNotification(
 
 /**
  * Parse tool info from Cline message
+ * @param msg - The Cline message to parse
+ * @param workspaceRoot - Optional workspace root to resolve relative paths
  */
-export function parseToolInfo(msg: ClineMessage): ClineToolInfo {
+export function parseToolInfo(msg: ClineMessage, workspaceRoot?: string): ClineToolInfo {
   try {
     const data = JSON.parse(msg.text || "{}");
     const toolType = data.tool || "unknown";
@@ -335,12 +345,47 @@ export function parseToolInfo(msg: ClineMessage): ClineToolInfo {
     }
 
     // For file operations, Cline provides:
-    // - path: relative path (e.g., "src/foo.ts")
-    // - content: absolute path (e.g., "/Users/.../src/foo.ts")
-    // Use the absolute path from content when available
+    // - path: relative path (e.g., "src/foo.ts") or workspace folder name (e.g., "claude-code-acp")
+    // - content: absolute path (e.g., "/Users/.../src/foo.ts") - only sometimes
+    // Try content first, then resolve relative path using workspace root
     let filePath = data.path;
     if (typeof data.content === "string" && data.content.startsWith("/")) {
+      // content field has absolute path
       filePath = data.content;
+    } else if (filePath && workspaceRoot && !filePath.startsWith("/")) {
+      // Check if path is the workspace folder name itself (e.g., "claude-code-acp")
+      // For directory listing tools, Cline may pass the workspace name as the path
+      const workspaceBasename = workspaceRoot.split("/").pop();
+      if (filePath === workspaceBasename) {
+        // Path is the workspace folder name, use workspace root directly
+        filePath = workspaceRoot;
+      } else {
+        // Resolve relative path using workspace root
+        filePath = `${workspaceRoot}/${filePath}`;
+      }
+    }
+
+    // Extract line number if present
+    // Cline may provide line, startLine, or other line-related fields
+    let line: number | undefined;
+    if (typeof data.line === "number") {
+      line = data.line;
+    } else if (typeof data.startLine === "number") {
+      line = data.startLine;
+    }
+
+    // Extract content if present (for file reads, command output, etc.)
+    // Note: content may be file contents or path depending on context
+    let content: string | undefined;
+    if (typeof data.content === "string" && !data.content.startsWith("/")) {
+      // If content doesn't look like a path, it's actual content
+      content = data.content;
+    }
+
+    // Extract diff if present (for file edits)
+    let diff: string | undefined;
+    if (typeof data.diff === "string") {
+      diff = data.diff;
     }
 
     return {
@@ -348,6 +393,9 @@ export function parseToolInfo(msg: ClineMessage): ClineToolInfo {
       title,
       input: data,
       path: filePath,
+      line,
+      content,
+      diff,
     };
   } catch {
     return {
@@ -356,6 +404,42 @@ export function parseToolInfo(msg: ClineMessage): ClineToolInfo {
       input: {},
     };
   }
+}
+
+/**
+ * Define the ToolCallContent types for ACP
+ * Matches the ACP SDK ToolCallContent schema
+ */
+type ToolCallContent =
+  | { type: "content"; content: { type: "text"; text: string } }
+  | { type: "diff"; path: string; newText: string; oldText?: string | null };
+
+/**
+ * Build ToolCallContent array from parsed tool info
+ */
+function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
+  const result: ToolCallContent[] = [];
+
+  // If we have a diff, include it as diff content
+  // The ACP format expects newText (and optionally oldText)
+  // Cline provides the diff string, so we include it as newText for display
+  if (toolInfo.diff && toolInfo.path) {
+    result.push({
+      type: "diff",
+      path: toolInfo.path,
+      newText: toolInfo.diff,
+    });
+  }
+
+  // If we have text content (file contents, command output, etc.), include it
+  if (toolInfo.content) {
+    result.push({
+      type: "content",
+      content: { type: "text", text: toolInfo.content },
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -384,14 +468,22 @@ function mapToolKind(
 export function clineToolAskToAcpToolCall(
   msg: ClineMessage,
   sessionId: string,
+  workspaceRoot?: string,
 ): SessionNotification {
-  const toolInfo = parseToolInfo(msg);
+  const toolInfo = parseToolInfo(msg, workspaceRoot);
   const kind = mapToolKind(toolInfo.type);
 
-  const locations: Array<{ path: string }> = [];
+  const locations: Array<{ path: string; line?: number }> = [];
   if (toolInfo.path) {
-    locations.push({ path: toolInfo.path });
+    const location: { path: string; line?: number } = { path: toolInfo.path };
+    if (toolInfo.line !== undefined) {
+      location.line = toolInfo.line;
+    }
+    locations.push(location);
   }
+
+  // Build content array from tool info (includes diffs and preview content)
+  const content = buildToolCallContent(toolInfo);
 
   return {
     sessionId,
@@ -402,8 +494,33 @@ export function clineToolAskToAcpToolCall(
       title: toolInfo.title,
       kind,
       rawInput: toolInfo.input,
-      content: [],
+      content,
       locations,
+    },
+  };
+}
+
+/**
+ * Convert Cline command ask to ACP tool call notification (pending approval)
+ * Command asks have raw command text, not JSON like tool asks
+ */
+export function clineCommandAskToAcpToolCall(
+  msg: ClineMessage,
+  sessionId: string,
+): SessionNotification {
+  const command = msg.text || "command";
+
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call",
+      toolCallId: String(msg.ts),
+      status: "pending",
+      title: command,
+      kind: "execute",
+      rawInput: { command },
+      content: [],
+      locations: [],
     },
   };
 }
@@ -415,8 +532,9 @@ export function clineToolAskToAcpToolCall(
 export function clineSayToolToAcpToolCall(
   msg: ClineMessage,
   sessionId: string,
+  workspaceRoot?: string,
 ): SessionNotification | null {
-  const toolInfo = parseToolInfo(msg);
+  const toolInfo = parseToolInfo(msg, workspaceRoot);
 
   // Skip if we couldn't parse tool info
   if (toolInfo.type === "unknown") {
@@ -425,10 +543,17 @@ export function clineSayToolToAcpToolCall(
 
   const kind = mapToolKind(toolInfo.type);
 
-  const locations: Array<{ path: string }> = [];
+  const locations: Array<{ path: string; line?: number }> = [];
   if (toolInfo.path) {
-    locations.push({ path: toolInfo.path });
+    const location: { path: string; line?: number } = { path: toolInfo.path };
+    if (toolInfo.line !== undefined) {
+      location.line = toolInfo.line;
+    }
+    locations.push(location);
   }
+
+  // Build content array from tool info (includes diffs and output content)
+  const content = buildToolCallContent(toolInfo);
 
   return {
     sessionId,
@@ -439,8 +564,70 @@ export function clineSayToolToAcpToolCall(
       title: toolInfo.title,
       kind,
       rawInput: toolInfo.input,
+      content,
+      locations,
+    },
+  };
+}
+
+/**
+ * Convert Cline SAY TOOL message to ACP tool call notification with "in_progress" status
+ * Used for partial tool messages that are still executing
+ */
+export function clineSayToolToAcpToolCallInProgress(
+  msg: ClineMessage,
+  sessionId: string,
+  workspaceRoot?: string,
+): SessionNotification | null {
+  // Only handle TOOL messages
+  const sayType = String(msg.say || "").toLowerCase();
+  if (sayType !== "tool") {
+    return null;
+  }
+
+  const toolInfo = parseToolInfo(msg, workspaceRoot);
+
+  // Skip if we couldn't parse tool info
+  if (toolInfo.type === "unknown") {
+    return null;
+  }
+
+  const kind = mapToolKind(toolInfo.type);
+
+  // For in_progress tool calls from partial messages, don't include locations.
+  // The path may be incomplete during streaming (e.g., "package" instead of "package.json").
+  // Locations will be included when we emit the completed tool_call.
+  const locations: Array<{ path: string; line?: number }> = [];
+
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call",
+      toolCallId: String(msg.ts),
+      status: "in_progress",
+      title: toolInfo.title,
+      kind,
+      rawInput: toolInfo.input,
       content: [],
       locations,
+    },
+  };
+}
+
+/**
+ * Create a tool_call_update notification to update the status of an existing tool call
+ */
+export function createToolCallUpdate(
+  sessionId: string,
+  toolCallId: string,
+  status: "pending" | "in_progress" | "completed" | "failed",
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call_update",
+      toolCallId,
+      status,
     },
   };
 }
@@ -630,5 +817,91 @@ export function extractMessagesFromState(stateJson: string): ClineMessage[] {
     }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Extract the primary workspace root path from Cline state JSON
+ * This is used to resolve relative file paths to absolute paths for the "follow" feature
+ */
+export function extractWorkspaceRoot(stateJson: string): string | undefined {
+  try {
+    const state = JSON.parse(stateJson);
+    const workspaceRoots = state.workspaceRoots as Array<{ path: string }> | undefined;
+    const primaryRootIndex = (state.primaryRootIndex as number) ?? 0;
+
+    if (workspaceRoots && workspaceRoots.length > 0) {
+      const primaryRoot = workspaceRoots[primaryRootIndex] || workspaceRoots[0];
+      return primaryRoot.path;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Extract the current mode from Cline state JSON
+ * Cline uses "plan" or "act" as mode values
+ */
+export function extractMode(stateJson: string): "plan" | "act" {
+  try {
+    const state = JSON.parse(stateJson);
+    // Cline's mode field is either "plan" or "act"
+    const mode = state.mode;
+    return mode === "act" ? "act" : "plan";
+  } catch {
+    return "plan"; // Default to plan mode
+  }
+}
+
+/**
+ * Create a current_mode_update notification
+ */
+export function createCurrentModeUpdate(
+  sessionId: string,
+  modeId: "plan" | "act",
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "current_mode_update",
+      currentModeId: modeId,
+    },
+  };
+}
+
+/**
+ * Extract cost info from a Cline api_req_started message
+ * Returns null if the message doesn't contain cost data
+ *
+ * The cost data appears in messages with say="api_req_started" after the request completes.
+ * Format: {"tokensIn": 1234, "tokensOut": 567, "cacheWrites": 0, "cacheReads": 100, "cost": 0.0123}
+ */
+export function extractCostInfo(msg: ClineMessage): ClineCostInfo | null {
+  // Only api_req_started messages contain cost data
+  const sayType = String(msg.say || "").toLowerCase();
+  if (sayType !== "api_req_started") {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(msg.text || "{}");
+
+    // Cost data is only present after the request completes
+    // Check for the presence of cost field (can be 0)
+    if (data.cost === undefined) {
+      return null;
+    }
+
+    return {
+      tokensIn: data.tokensIn || 0,
+      tokensOut: data.tokensOut || 0,
+      cacheWrites: data.cacheWrites || 0,
+      cacheReads: data.cacheReads || 0,
+      cost: data.cost || 0,
+    };
+  } catch {
+    return null;
   }
 }

@@ -41,14 +41,19 @@ import {
   clineMessageToAcpNotification,
   clinePartialToAcpNotification,
   clineTaskProgressToAcpPlan,
+  createCurrentModeUpdate,
+  extractCostInfo,
+  extractMessagesFromState,
+  extractMode,
   getLatestTaskProgress,
   parseToolInfo,
   parseTaskProgressToPlanEntries,
   clineToolAskToAcpToolCall,
+  clineSayToolToAcpToolCallInProgress,
+  createToolCallUpdate,
   isTaskComplete,
   isWaitingForUserInput,
   needsApproval,
-  extractMessagesFromState,
 } from "../cline/conversion.js";
 
 // Mock Cline gRPC client factory
@@ -893,6 +898,55 @@ describe("Cline to ACP conversion", () => {
       expect(messages).toEqual([]);
     });
   });
+
+  describe("extractMode()", () => {
+    it("should extract 'plan' mode from state", () => {
+      const stateJson = JSON.stringify({ mode: "plan" });
+      const mode = extractMode(stateJson);
+      expect(mode).toBe("plan");
+    });
+
+    it("should extract 'act' mode from state", () => {
+      const stateJson = JSON.stringify({ mode: "act" });
+      const mode = extractMode(stateJson);
+      expect(mode).toBe("act");
+    });
+
+    it("should default to 'plan' when mode is not specified", () => {
+      const stateJson = JSON.stringify({});
+      const mode = extractMode(stateJson);
+      expect(mode).toBe("plan");
+    });
+
+    it("should default to 'plan' for invalid JSON", () => {
+      const mode = extractMode("invalid json");
+      expect(mode).toBe("plan");
+    });
+  });
+
+  describe("createCurrentModeUpdate()", () => {
+    it("should create a current_mode_update notification for plan mode", () => {
+      const notification = createCurrentModeUpdate("session-123", "plan");
+      expect(notification).toEqual({
+        sessionId: "session-123",
+        update: {
+          sessionUpdate: "current_mode_update",
+          currentModeId: "plan",
+        },
+      });
+    });
+
+    it("should create a current_mode_update notification for act mode", () => {
+      const notification = createCurrentModeUpdate("session-456", "act");
+      expect(notification).toEqual({
+        sessionId: "session-456",
+        update: {
+          sessionUpdate: "current_mode_update",
+          currentModeId: "act",
+        },
+      });
+    });
+  });
 });
 
 describe("parseToolInfo()", () => {
@@ -955,6 +1009,51 @@ describe("parseToolInfo()", () => {
     });
 
     expect(toolInfo.title).toContain("read");
+  });
+
+  it("should extract content from tool data", () => {
+    const toolInfo = parseToolInfo({
+      ts: Date.now(),
+      type: ClineMessageType.SAY,
+      say: ClineSay.TOOL,
+      text: JSON.stringify({
+        tool: "read_file",
+        path: "/path/to/file.ts",
+        content: "const x = 1;\nexport default x;",
+      }),
+    });
+
+    expect(toolInfo.content).toBe("const x = 1;\nexport default x;");
+  });
+
+  it("should not extract content if it looks like a path", () => {
+    const toolInfo = parseToolInfo({
+      ts: Date.now(),
+      type: ClineMessageType.SAY,
+      say: ClineSay.TOOL,
+      text: JSON.stringify({
+        tool: "read_file",
+        path: "src/file.ts",
+        content: "/Users/jason/project/src/file.ts", // Absolute path, not content
+      }),
+    });
+
+    expect(toolInfo.content).toBeUndefined();
+  });
+
+  it("should extract diff from tool data", () => {
+    const toolInfo = parseToolInfo({
+      ts: Date.now(),
+      type: ClineMessageType.SAY,
+      say: ClineSay.TOOL,
+      text: JSON.stringify({
+        tool: "replace_in_file",
+        path: "/path/to/file.ts",
+        diff: "-const x = 1;\n+const x = 2;",
+      }),
+    });
+
+    expect(toolInfo.diff).toBe("-const x = 1;\n+const x = 2;");
   });
 });
 
@@ -1108,6 +1207,235 @@ describe("Tool result handling", () => {
     );
 
     expect(notification).not.toBeNull();
+  });
+});
+
+describe("Tool Call Updates (in_progress status)", () => {
+  describe("clineSayToolToAcpToolCallInProgress()", () => {
+    it("should emit tool_call with status in_progress for partial SAY TOOL message", () => {
+      const ts = Date.now();
+      const notification = clineSayToolToAcpToolCallInProgress(
+        {
+          ts,
+          type: ClineMessageType.SAY,
+          say: ClineSay.TOOL,
+          text: JSON.stringify({
+            tool: "readFile",
+            path: "src/index.ts",
+            content: "/absolute/path/src/index.ts",
+          }),
+          partial: true,
+        },
+        "session-123",
+      );
+
+      expect(notification).not.toBeNull();
+      expect(notification?.update.sessionUpdate).toBe("tool_call");
+      expect((notification?.update as any).status).toBe("in_progress");
+      expect((notification?.update as any).toolCallId).toBe(String(ts));
+      expect((notification?.update as any).title).toContain("readFile");
+    });
+
+    it("should NOT include locations in in_progress tool_call (path may be incomplete during streaming)", () => {
+      const notification = clineSayToolToAcpToolCallInProgress(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.SAY,
+          say: ClineSay.TOOL,
+          text: JSON.stringify({
+            tool: "readFile",
+            path: "src/foo.ts",
+            content: "/Users/test/project/src/foo.ts",
+          }),
+          partial: true,
+        },
+        "session-123",
+      );
+
+      expect(notification).not.toBeNull();
+      // Locations should be empty for in_progress - path may be incomplete during streaming
+      // (e.g., "package" instead of "package.json"). Locations are included when tool completes.
+      expect((notification?.update as any).locations).toEqual([]);
+    });
+
+    it("should return null for non-tool messages", () => {
+      const notification = clineSayToolToAcpToolCallInProgress(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.SAY,
+          say: ClineSay.TEXT,
+          text: "Hello world",
+          partial: true,
+        },
+        "session-123",
+      );
+
+      expect(notification).toBeNull();
+    });
+
+    it("should return null for unknown tool type", () => {
+      const notification = clineSayToolToAcpToolCallInProgress(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.SAY,
+          say: ClineSay.TOOL,
+          text: "invalid json",
+          partial: true,
+        },
+        "session-123",
+      );
+
+      expect(notification).toBeNull();
+    });
+  });
+
+  describe("createToolCallUpdate()", () => {
+    it("should create tool_call_update notification with completed status", () => {
+      const notification = createToolCallUpdate("session-123", "12345", "completed");
+
+      expect(notification.sessionId).toBe("session-123");
+      expect(notification.update.sessionUpdate).toBe("tool_call_update");
+      expect((notification.update as any).toolCallId).toBe("12345");
+      expect((notification.update as any).status).toBe("completed");
+    });
+
+    it("should create tool_call_update notification with failed status", () => {
+      const notification = createToolCallUpdate("session-456", "67890", "failed");
+
+      expect(notification.sessionId).toBe("session-456");
+      expect(notification.update.sessionUpdate).toBe("tool_call_update");
+      expect((notification.update as any).toolCallId).toBe("67890");
+      expect((notification.update as any).status).toBe("failed");
+    });
+
+    it("should create tool_call_update notification with in_progress status", () => {
+      const notification = createToolCallUpdate("session-789", "11111", "in_progress");
+
+      expect(notification.update.sessionUpdate).toBe("tool_call_update");
+      expect((notification.update as any).status).toBe("in_progress");
+    });
+  });
+});
+
+describe("Line Numbers in Locations", () => {
+  describe("parseToolInfo() line extraction", () => {
+    it("should extract line number from tool data", () => {
+      const msg: ClineMessage = {
+        ts: Date.now(),
+        type: ClineMessageType.SAY,
+        say: ClineSay.TOOL,
+        text: JSON.stringify({
+          tool: "replace_in_file",
+          path: "src/index.ts",
+          line: 42,
+          content: "/abs/path/src/index.ts",
+        }),
+      };
+
+      const toolInfo = parseToolInfo(msg);
+      expect(toolInfo.line).toBe(42);
+    });
+
+    it("should extract startLine as line number", () => {
+      const msg: ClineMessage = {
+        ts: Date.now(),
+        type: ClineMessageType.SAY,
+        say: ClineSay.TOOL,
+        text: JSON.stringify({
+          tool: "replace_in_file",
+          path: "src/foo.ts",
+          startLine: 100,
+          endLine: 120,
+        }),
+      };
+
+      const toolInfo = parseToolInfo(msg);
+      expect(toolInfo.line).toBe(100);
+    });
+
+    it("should return undefined line when not present", () => {
+      const msg: ClineMessage = {
+        ts: Date.now(),
+        type: ClineMessageType.SAY,
+        say: ClineSay.TOOL,
+        text: JSON.stringify({
+          tool: "readFile",
+          path: "src/foo.ts",
+        }),
+      };
+
+      const toolInfo = parseToolInfo(msg);
+      expect(toolInfo.line).toBeUndefined();
+    });
+  });
+
+  describe("tool_call locations with line numbers", () => {
+    it("should include line number in locations for clineSayToolToAcpToolCall", () => {
+      const notification = clineMessageToAcpNotification(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.SAY,
+          say: ClineSay.TOOL,
+          text: JSON.stringify({
+            tool: "replace_in_file",
+            path: "src/index.ts",
+            line: 42,
+            content: "/abs/path/src/index.ts",
+          }),
+        },
+        "session-123",
+      );
+
+      expect(notification).not.toBeNull();
+      expect((notification?.update as any).locations).toContainEqual({
+        path: "/abs/path/src/index.ts",
+        line: 42,
+      });
+    });
+
+    it("should include line number in locations for clineToolAskToAcpToolCall", () => {
+      const notification = clineToolAskToAcpToolCall(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.ASK,
+          ask: ClineAsk.TOOL,
+          text: JSON.stringify({
+            tool: "replace_in_file",
+            path: "src/index.ts",
+            line: 55,
+            content: "/abs/path/src/index.ts",
+          }),
+        },
+        "session-123",
+      );
+
+      expect((notification.update as any).locations).toContainEqual({
+        path: "/abs/path/src/index.ts",
+        line: 55,
+      });
+    });
+
+    it("should omit line from locations when not present", () => {
+      const notification = clineMessageToAcpNotification(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.SAY,
+          say: ClineSay.TOOL,
+          text: JSON.stringify({
+            tool: "readFile",
+            path: "src/foo.ts",
+            content: "/abs/path/src/foo.ts",
+          }),
+        },
+        "session-123",
+      );
+
+      expect(notification).not.toBeNull();
+      // Location should NOT have a line property (or it should be undefined)
+      const location = (notification?.update as any).locations[0];
+      expect(location.path).toBe("/abs/path/src/foo.ts");
+      expect(location.line).toBeUndefined();
+    });
   });
 });
 
@@ -1299,6 +1627,788 @@ Just regular text`;
       const latest = getLatestTaskProgress(messages);
 
       expect(latest).not.toBeNull();
+    });
+  });
+});
+
+describe("Cost Tracking", () => {
+  describe("extractCostInfo()", () => {
+    it("should extract cost info from api_req_started message with cost data", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: ClineSay.API_REQ_STARTED,
+        text: JSON.stringify({
+          tokensIn: 1500,
+          tokensOut: 800,
+          cacheWrites: 100,
+          cacheReads: 50,
+          cost: 0.0234,
+        }),
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).not.toBeNull();
+      expect(costInfo!.tokensIn).toBe(1500);
+      expect(costInfo!.tokensOut).toBe(800);
+      expect(costInfo!.cacheWrites).toBe(100);
+      expect(costInfo!.cacheReads).toBe(50);
+      expect(costInfo!.cost).toBe(0.0234);
+    });
+
+    it("should return null for api_req_started message without cost data", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: ClineSay.API_REQ_STARTED,
+        text: JSON.stringify({
+          request: "some request data",
+          // No cost, tokensIn, etc. - request still in progress
+        }),
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).toBeNull();
+    });
+
+    it("should return null for non-api_req_started messages", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: ClineSay.TEXT,
+        text: "Hello world",
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).toBeNull();
+    });
+
+    it("should handle lowercase say type from state JSON", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: "api_req_started" as ClineSay,
+        text: JSON.stringify({
+          tokensIn: 500,
+          tokensOut: 200,
+          cost: 0.01,
+        }),
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).not.toBeNull();
+      expect(costInfo!.tokensIn).toBe(500);
+      expect(costInfo!.tokensOut).toBe(200);
+      expect(costInfo!.cost).toBe(0.01);
+    });
+
+    it("should handle zero cost (free tier or cached)", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: ClineSay.API_REQ_STARTED,
+        text: JSON.stringify({
+          tokensIn: 100,
+          tokensOut: 50,
+          cacheReads: 100,
+          cost: 0, // Zero cost (fully cached)
+        }),
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).not.toBeNull();
+      expect(costInfo!.cost).toBe(0);
+      expect(costInfo!.cacheReads).toBe(100);
+    });
+
+    it("should handle missing optional fields", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: ClineSay.API_REQ_STARTED,
+        text: JSON.stringify({
+          tokensIn: 100,
+          cost: 0.005,
+          // No tokensOut, cacheWrites, cacheReads
+        }),
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).not.toBeNull();
+      expect(costInfo!.tokensIn).toBe(100);
+      expect(costInfo!.tokensOut).toBe(0);
+      expect(costInfo!.cacheWrites).toBe(0);
+      expect(costInfo!.cacheReads).toBe(0);
+      expect(costInfo!.cost).toBe(0.005);
+    });
+
+    it("should return null for invalid JSON", () => {
+      const msg: ClineMessage = {
+        ts: 1000,
+        type: ClineMessageType.SAY,
+        say: ClineSay.API_REQ_STARTED,
+        text: "not valid json",
+      };
+
+      const costInfo = extractCostInfo(msg);
+
+      expect(costInfo).toBeNull();
+    });
+  });
+
+  describe("ClineSession cost fields", () => {
+    it("should initialize session with zero costs", async () => {
+      const mockClient = createMockClineClient();
+      const agent = new ClineAcpAgent({
+        clineClient: mockClient,
+        autoStart: false,
+      });
+      agent.setClient(createMockConnection());
+      await agent.initialize({ clientCapabilities: {} });
+
+      const response = await agent.newSession({});
+      const session = agent.getSession(response.sessionId);
+
+      expect(session).toBeDefined();
+      expect(session!.totalCost).toBe(0);
+      expect(session!.totalTokensIn).toBe(0);
+      expect(session!.totalTokensOut).toBe(0);
+      expect(session!.totalCacheWrites).toBe(0);
+      expect(session!.totalCacheReads).toBe(0);
+    });
+  });
+});
+
+describe("Streaming Integration Tests", () => {
+  describe("Cost accumulation during streaming", () => {
+    it("should accumulate costs from multiple api_req_started messages", async () => {
+      // Create state updates that simulate multiple API requests completing
+      const stateUpdates = [
+        // First API request completes
+        {
+          stateJson: JSON.stringify({
+            mode: "plan",
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "say",
+                say: "api_req_started",
+                text: JSON.stringify({
+                  tokensIn: 500,
+                  tokensOut: 200,
+                  cacheWrites: 50,
+                  cacheReads: 25,
+                  cost: 0.01,
+                }),
+              },
+              {
+                ts: 1001,
+                type: "say",
+                say: "text",
+                text: "Hello!",
+              },
+            ],
+          }),
+        },
+        // Second API request completes
+        {
+          stateJson: JSON.stringify({
+            mode: "plan",
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "say",
+                say: "api_req_started",
+                text: JSON.stringify({
+                  tokensIn: 500,
+                  tokensOut: 200,
+                  cacheWrites: 50,
+                  cacheReads: 25,
+                  cost: 0.01,
+                }),
+              },
+              {
+                ts: 1001,
+                type: "say",
+                say: "text",
+                text: "Hello!",
+              },
+              {
+                ts: 2000,
+                type: "say",
+                say: "api_req_started",
+                text: JSON.stringify({
+                  tokensIn: 800,
+                  tokensOut: 400,
+                  cacheWrites: 100,
+                  cacheReads: 75,
+                  cost: 0.02,
+                }),
+              },
+              {
+                ts: 2001,
+                type: "ask",
+                ask: "plan_mode_respond",
+                text: JSON.stringify({ response: "Done!", options: [] }),
+              },
+            ],
+          }),
+        },
+      ];
+
+      // Create mock client with streaming state updates
+      const mockClineClient: ClineClient = {
+        Task: {
+          newTask: vi.fn().mockResolvedValue("task-123"),
+          askResponse: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+        },
+        State: {
+          subscribeToState: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              for (const update of stateUpdates) {
+                yield update;
+              }
+            },
+          }),
+          getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
+          togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
+          updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
+        },
+        Ui: {
+          subscribeToPartialMessage: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      };
+
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "allow" },
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // Verify costs were accumulated correctly
+      const session = agent.getSession(sessionResponse.sessionId);
+      expect(session!.totalCost).toBe(0.03); // 0.01 + 0.02
+      expect(session!.totalTokensIn).toBe(1300); // 500 + 800
+      expect(session!.totalTokensOut).toBe(600); // 200 + 400
+      expect(session!.totalCacheWrites).toBe(150); // 50 + 100
+      expect(session!.totalCacheReads).toBe(100); // 25 + 75
+    });
+
+    it("should not double-count costs from repeated state updates", async () => {
+      // Same api_req_started message appears in multiple state updates
+      const stateUpdates = [
+        {
+          stateJson: JSON.stringify({
+            mode: "plan",
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "say",
+                say: "api_req_started",
+                text: JSON.stringify({ tokensIn: 500, tokensOut: 200, cost: 0.01 }),
+              },
+            ],
+          }),
+        },
+        // Same message appears again in next update
+        {
+          stateJson: JSON.stringify({
+            mode: "plan",
+            clineMessages: [
+              {
+                ts: 1000, // Same timestamp - should not be counted again
+                type: "say",
+                say: "api_req_started",
+                text: JSON.stringify({ tokensIn: 500, tokensOut: 200, cost: 0.01 }),
+              },
+              {
+                ts: 1001,
+                type: "ask",
+                ask: "plan_mode_respond",
+                text: JSON.stringify({ response: "Done!", options: [] }),
+              },
+            ],
+          }),
+        },
+      ];
+
+      const mockClineClient: ClineClient = {
+        Task: {
+          newTask: vi.fn().mockResolvedValue("task-123"),
+          askResponse: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+        },
+        State: {
+          subscribeToState: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              for (const update of stateUpdates) {
+                yield update;
+              }
+            },
+          }),
+          getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
+          togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
+          updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
+        },
+        Ui: {
+          subscribeToPartialMessage: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      };
+
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "allow" },
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // Verify cost was only counted once despite appearing in two state updates
+      const session = agent.getSession(sessionResponse.sessionId);
+      expect(session!.totalCost).toBe(0.01); // Only counted once
+      expect(session!.totalTokensIn).toBe(500);
+    });
+  });
+
+  describe("Mode change emissions during streaming", () => {
+    it("should emit current_mode_update when mode changes from plan to act", async () => {
+      const stateUpdates = [
+        {
+          stateJson: JSON.stringify({
+            mode: "plan",
+            clineMessages: [
+              { ts: 1000, type: "say", say: "text", text: "Starting in plan mode" },
+            ],
+          }),
+        },
+        // Mode changes to act
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            clineMessages: [
+              { ts: 1000, type: "say", say: "text", text: "Starting in plan mode" },
+              { ts: 1001, type: "say", say: "text", text: "Now in act mode" },
+            ],
+          }),
+        },
+        // Task completes
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            clineMessages: [
+              { ts: 1000, type: "say", say: "text", text: "Starting in plan mode" },
+              { ts: 1001, type: "say", say: "text", text: "Now in act mode" },
+              { ts: 1002, type: "ask", ask: "completion_result" },
+            ],
+          }),
+        },
+      ];
+
+      const mockClineClient: ClineClient = {
+        Task: {
+          newTask: vi.fn().mockResolvedValue("task-123"),
+          askResponse: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+        },
+        State: {
+          subscribeToState: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              for (const update of stateUpdates) {
+                yield update;
+              }
+            },
+          }),
+          getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
+          togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
+          updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
+        },
+        Ui: {
+          subscribeToPartialMessage: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      };
+
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "allow" },
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // Find the current_mode_update call
+      const modeUpdateCalls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: [{ update: { sessionUpdate: string } }]) => call[0]?.update?.sessionUpdate === "current_mode_update"
+      );
+
+      expect(modeUpdateCalls.length).toBe(1);
+      expect(modeUpdateCalls[0][0].update.currentModeId).toBe("act");
+    });
+
+    it("should emit current_mode_update when mode changes from act to plan", async () => {
+      const stateUpdates = [
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            clineMessages: [
+              { ts: 1000, type: "say", say: "text", text: "Starting in act mode" },
+            ],
+          }),
+        },
+        // Mode changes to plan
+        {
+          stateJson: JSON.stringify({
+            mode: "plan",
+            clineMessages: [
+              { ts: 1000, type: "say", say: "text", text: "Starting in act mode" },
+              { ts: 1001, type: "ask", ask: "plan_mode_respond", text: JSON.stringify({ response: "Now planning", options: [] }) },
+            ],
+          }),
+        },
+      ];
+
+      const mockClineClient: ClineClient = {
+        Task: {
+          newTask: vi.fn().mockResolvedValue("task-123"),
+          askResponse: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+        },
+        State: {
+          subscribeToState: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              for (const update of stateUpdates) {
+                yield update;
+              }
+            },
+          }),
+          getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
+          togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
+          updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
+        },
+        Ui: {
+          subscribeToPartialMessage: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      };
+
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "allow" },
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // Find the current_mode_update call
+      const modeUpdateCalls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: [{ update: { sessionUpdate: string } }]) => call[0]?.update?.sessionUpdate === "current_mode_update"
+      );
+
+      expect(modeUpdateCalls.length).toBe(1);
+      expect(modeUpdateCalls[0][0].update.currentModeId).toBe("plan");
+    });
+  });
+
+  describe("Tool call in_progress → completed flow", () => {
+    it("should emit in_progress then completed tool_call for same tool", async () => {
+      const stateUpdates = [
+        // Tool starts executing (partial)
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            workspaceRoots: [{ path: "/workspace" }],
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "say",
+                say: "tool",
+                text: JSON.stringify({
+                  tool: "readFile",
+                  path: "src/index.ts",
+                  content: "/workspace/src/index.ts",
+                }),
+                partial: true,
+              },
+            ],
+          }),
+        },
+        // Tool completes
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            workspaceRoots: [{ path: "/workspace" }],
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "say",
+                say: "tool",
+                text: JSON.stringify({
+                  tool: "readFile",
+                  path: "src/index.ts",
+                  content: "/workspace/src/index.ts",
+                }),
+                partial: false, // Now complete
+              },
+              {
+                ts: 1001,
+                type: "ask",
+                ask: "completion_result",
+              },
+            ],
+          }),
+        },
+      ];
+
+      const mockClineClient: ClineClient = {
+        Task: {
+          newTask: vi.fn().mockResolvedValue("task-123"),
+          askResponse: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+        },
+        State: {
+          subscribeToState: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              for (const update of stateUpdates) {
+                yield update;
+              }
+            },
+          }),
+          getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
+          togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
+          updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
+        },
+        Ui: {
+          subscribeToPartialMessage: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      };
+
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "allow" },
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // Find tool_call notifications for the same tool (ts: 1000)
+      const toolCallUpdates = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: [{ update: { sessionUpdate: string; toolCallId?: string } }]) =>
+          call[0]?.update?.sessionUpdate === "tool_call" &&
+          call[0]?.update?.toolCallId === "1000"
+      );
+
+      // Should have 2 tool_call notifications: one in_progress, one completed
+      expect(toolCallUpdates.length).toBe(2);
+
+      // First should be in_progress
+      expect(toolCallUpdates[0][0].update.status).toBe("in_progress");
+      expect(toolCallUpdates[0][0].update.locations).toEqual([]); // No locations for in_progress
+
+      // Second should be completed with locations
+      expect(toolCallUpdates[1][0].update.status).toBe("completed");
+      expect(toolCallUpdates[1][0].update.locations).toContainEqual({ path: "/workspace/src/index.ts" });
+    });
+
+    it("should emit failed status when tool is rejected", async () => {
+      const stateUpdates = [
+        // Tool pending approval
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            workspaceRoots: [{ path: "/workspace" }],
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "ask",
+                ask: "tool",
+                text: JSON.stringify({
+                  tool: "write_to_file",
+                  path: "src/index.ts",
+                  content: "new content",
+                }),
+                partial: false,
+              },
+            ],
+          }),
+        },
+        // After rejection, Cline responds with new message
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            workspaceRoots: [{ path: "/workspace" }],
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "ask",
+                ask: "tool",
+                text: JSON.stringify({
+                  tool: "write_to_file",
+                  path: "src/index.ts",
+                  content: "new content",
+                }),
+                partial: false,
+              },
+              {
+                ts: 1001,
+                type: "say",
+                say: "text",
+                text: "I understand you rejected the edit.",
+              },
+              {
+                ts: 1002,
+                type: "ask",
+                ask: "plan_mode_respond",
+                text: JSON.stringify({ response: "What would you like me to do instead?", options: [] }),
+              },
+            ],
+          }),
+        },
+      ];
+
+      const mockClineClient: ClineClient = {
+        Task: {
+          newTask: vi.fn().mockResolvedValue("task-123"),
+          askResponse: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+        },
+        State: {
+          subscribeToState: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              for (const update of stateUpdates) {
+                yield update;
+              }
+            },
+          }),
+          getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
+          togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
+          updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
+        },
+        Ui: {
+          subscribeToPartialMessage: vi.fn().mockReturnValue({
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      };
+
+      // Mock connection that rejects the tool
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "reject" }, // Reject the tool
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // Find tool_call_update with failed status
+      const failedUpdates = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: [{ update: { sessionUpdate: string; status?: string } }]) =>
+          call[0]?.update?.sessionUpdate === "tool_call_update" &&
+          call[0]?.update?.status === "failed"
+      );
+
+      expect(failedUpdates.length).toBe(1);
+      expect(failedUpdates[0][0].update.toolCallId).toBe("1000");
     });
   });
 });

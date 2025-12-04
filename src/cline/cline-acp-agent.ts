@@ -35,7 +35,14 @@ import {
   clineMessageToAcpNotification,
   clinePartialToAcpNotification,
   clineTaskProgressToAcpPlan,
+  clineSayToolToAcpToolCall,
+  clineSayToolToAcpToolCallInProgress,
+  createCurrentModeUpdate,
+  createToolCallUpdate,
+  extractCostInfo,
   extractMessagesFromState,
+  extractMode,
+  extractWorkspaceRoot,
   getLatestTaskProgress,
   isTaskComplete,
   isWaitingForUserInput,
@@ -155,6 +162,12 @@ export class ClineAcpAgent implements Agent {
       cancelled: false,
       mode: "plan",
       isTaskCreated: false, // Track whether we've sent the first message
+      // Initialize cost tracking
+      totalCost: 0,
+      totalTokensIn: 0,
+      totalTokensOut: 0,
+      totalCacheWrites: 0,
+      totalCacheReads: 0,
     };
 
     // Define available modes (matching Cline's actual modes)
@@ -426,9 +439,20 @@ export class ClineAcpAgent implements Agent {
     // Track the last task_progress timestamp to detect changes
     let lastTaskProgressTs: number | null = null;
 
+    // Track the current mode to detect changes and emit current_mode_update notifications
+    let currentMode: "plan" | "act" | null = null;
+
     // Track which approval requests we've already handled
     // This prevents duplicate permission requests if state updates arrive before Cline processes our response
     const handledApprovalTimestamps = new Set<number>();
+
+    // Track tool calls that have been emitted as "in_progress"
+    // When they complete, we emit a tool_call_update instead of a new tool_call
+    const inProgressToolCalls = new Set<number>();
+
+    // Track which api_req_started messages we've already processed for cost data
+    // api_req_started messages initially have no cost, then get updated with cost when request completes
+    const processedCostTimestamps = new Set<number>();
 
     let stateUpdateCount = 0;
 
@@ -441,7 +465,41 @@ export class ClineAcpAgent implements Agent {
         }
 
         const messages = extractMessagesFromState(state.stateJson || "{}");
-        this.log(`State update #${stateUpdateCount}:`, { messageCount: messages.length });
+        const workspaceRoot = extractWorkspaceRoot(state.stateJson || "{}");
+        this.log(`State update #${stateUpdateCount}:`, { messageCount: messages.length, workspaceRoot });
+
+        // Check for mode changes and emit current_mode_update notifications
+        const newMode = extractMode(state.stateJson || "{}");
+        if (currentMode !== null && newMode !== currentMode) {
+          this.log("Mode changed:", { from: currentMode, to: newMode });
+          await this.client.sessionUpdate(createCurrentModeUpdate(sessionId, newMode));
+        }
+        currentMode = newMode;
+
+        // Extract and accumulate cost data from api_req_started messages
+        // These messages are updated with cost data after the API request completes
+        for (const msg of messages) {
+          if (msg.ts && !processedCostTimestamps.has(msg.ts)) {
+            const costInfo = extractCostInfo(msg);
+            if (costInfo) {
+              // This message has cost data and we haven't processed it yet
+              processedCostTimestamps.add(msg.ts);
+              session.totalCost += costInfo.cost;
+              session.totalTokensIn += costInfo.tokensIn;
+              session.totalTokensOut += costInfo.tokensOut;
+              session.totalCacheWrites += costInfo.cacheWrites;
+              session.totalCacheReads += costInfo.cacheReads;
+              this.log("Cost accumulated:", {
+                requestCost: costInfo.cost,
+                tokensIn: costInfo.tokensIn,
+                tokensOut: costInfo.tokensOut,
+                totalCost: session.totalCost,
+                totalTokensIn: session.totalTokensIn,
+                totalTokensOut: session.totalTokensOut,
+              });
+            }
+          }
+        }
 
         // Check for task_progress updates and emit plan notifications
         const latestTaskProgress = getLatestTaskProgress(messages);
@@ -457,9 +515,21 @@ export class ClineAcpAgent implements Agent {
         for (let i = 0; i < messages.length; i++) {
           const msg = messages[i];
 
-          // Skip partial messages (they're incomplete) - but don't mark as sent
-          // so we'll process them when they become complete
+          // Handle partial messages - most are skipped, but partial say:tool messages
+          // should emit a tool_call with "in_progress" status for real-time feedback
           if (msg.partial) {
+            const msgType = String(msg.type || "").toLowerCase();
+            const sayType = String(msg.say || "").toLowerCase();
+
+            // For partial say:tool messages, emit as in_progress if not already done
+            if (msgType === "say" && sayType === "tool" && msg.ts && !inProgressToolCalls.has(msg.ts)) {
+              const inProgressNotification = clineSayToolToAcpToolCallInProgress(msg, sessionId, workspaceRoot);
+              if (inProgressNotification) {
+                inProgressToolCalls.add(msg.ts);
+                this.log("Emitting in_progress tool_call:", JSON.stringify(inProgressNotification.update, null, 2));
+                await this.client.sessionUpdate(inProgressNotification);
+              }
+            }
             continue;
           }
 
@@ -492,8 +562,23 @@ export class ClineAcpAgent implements Agent {
             sentMessageTimestamps.add(msg.ts);
           }
 
+          // Check if this is a tool message that was previously emitted as in_progress
+          // If so, emit a full tool_call with completed status (not just tool_call_update)
+          // because we now have the complete path and can include proper locations
+          if (msgType === "say" && sayType === "tool" && msg.ts && inProgressToolCalls.has(msg.ts)) {
+            // This tool was already emitted as in_progress, now emit the completed version
+            // with proper locations (the path is now complete since msg is no longer partial)
+            const completedNotification = clineSayToolToAcpToolCall(msg, sessionId, workspaceRoot);
+            if (completedNotification) {
+              this.log("Emitting completed tool_call (was in_progress):", JSON.stringify(completedNotification.update, null, 2));
+              await this.client.sessionUpdate(completedNotification);
+            }
+            inProgressToolCalls.delete(msg.ts); // Clean up
+            continue;
+          }
+
           // Pass the original message index to properly skip user's echoed input (index 0)
-          const notification = clineMessageToAcpNotification(msg, sessionId, i);
+          const notification = clineMessageToAcpNotification(msg, sessionId, i, workspaceRoot);
           if (notification) {
             // Log tool_call notifications for debugging file navigation
             if (notification.update.sessionUpdate === "tool_call") {
@@ -601,6 +686,11 @@ export class ClineAcpAgent implements Agent {
           files: [],
         });
         this.log("handleApprovalRequest: NO sent successfully");
+
+        // Emit tool_call_update with "failed" status to indicate rejection
+        const toolCallId = String(lastMessage.ts);
+        this.log("handleApprovalRequest: emitting failed status for tool call", { toolCallId });
+        await this.client.sessionUpdate(createToolCallUpdate(sessionId, toolCallId, "failed"));
       }
     }
   }

@@ -12,6 +12,7 @@ Use Cline from ACP clients such as [Zed](https://zed.dev)!
 - Plan/Act mode switching
 - Multiple AI model support (via Cline's provider configuration)
 - Streaming responses
+- Tool integration testing capabilities
 
 ## Prerequisites
 
@@ -78,6 +79,19 @@ This adapter connects to Cline via its gRPC interface:
 ```
 
 Cline handles all file operations and tool execution internally.
+
+## Known Limitations
+
+Due to limitations in the Cline CLI's gRPC interface, some ACP features are not fully supported:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Line numbers in file edits | Not available | Cline's `ToolMessage` struct doesn't include line number fields. File paths work, but jump-to-line is not supported. |
+| Available commands | Not available | Cline doesn't expose a list of available slash commands through its gRPC interface. |
+
+These limitations are upstream in the Cline CLI and would require changes to the [cline/cline](https://github.com/cline/cline) repository to resolve.
+
+For detailed information about ACP feature support and Cline CLI capabilities, see [docs/ACP_FEATURE_IMPROVEMENTS.md](docs/ACP_FEATURE_IMPROVEMENTS.md).
 
 ## Development
 

@@ -192,6 +192,12 @@ export interface ClineSession {
   cancelled: boolean;
   mode: "plan" | "act";
   isTaskCreated?: boolean; // Track whether we've sent the first message to Cline
+  // Cost tracking
+  totalCost: number;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalCacheWrites: number;
+  totalCacheReads: number;
 }
 
 // Cline prompt format (converted from ACP)
@@ -207,4 +213,16 @@ export interface ClineToolInfo {
   title: string;
   input: Record<string, unknown>;
   path?: string;
+  line?: number;
+  content?: string;  // Tool output or file content
+  diff?: string;     // Diff for file edit operations
+}
+
+// Cost info extracted from api_req_started messages
+export interface ClineCostInfo {
+  tokensIn: number;
+  tokensOut: number;
+  cacheWrites: number;
+  cacheReads: number;
+  cost: number;
 }
