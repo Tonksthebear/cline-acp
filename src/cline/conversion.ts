@@ -122,6 +122,16 @@ export function clineMessageToAcpNotification(
 
   // ASK messages (requesting input/approval)
   if (msgType === "ask") {
+    // Skip API-related asks (failures, retries)
+    if (askType.includes("api_req")) {
+      return null;
+    }
+
+    // Skip internal ask types
+    if (askType === "resume_task" || askType === "resume_completed_task") {
+      return null;
+    }
+
     // Tool/command permission request
     if (askType === "tool" || askType === "command") {
       return clineToolAskToAcpToolCall(msg, sessionId);

@@ -551,6 +551,53 @@ describe("Cline to ACP conversion", () => {
 
       expect(notification).toBeNull();
     });
+
+    it("should return null for ASK api_req_failed messages", () => {
+      const notification = clineMessageToAcpNotification(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.ASK,
+          ask: ClineAsk.API_REQ_FAILED,
+          text: JSON.stringify({
+            attempt: 3,
+            maxAttempts: 3,
+            failed: true,
+            message: "API request failed",
+          }),
+        },
+        "session-123",
+      );
+
+      expect(notification).toBeNull();
+    });
+
+    it("should return null for ASK resume_task messages", () => {
+      const notification = clineMessageToAcpNotification(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.ASK,
+          ask: ClineAsk.RESUME_TASK,
+          text: "Resume previous task?",
+        },
+        "session-123",
+      );
+
+      expect(notification).toBeNull();
+    });
+
+    it("should return null for ASK resume_completed_task messages", () => {
+      const notification = clineMessageToAcpNotification(
+        {
+          ts: Date.now(),
+          type: ClineMessageType.ASK,
+          ask: ClineAsk.RESUME_COMPLETED_TASK,
+          text: "Resume completed task?",
+        },
+        "session-123",
+      );
+
+      expect(notification).toBeNull();
+    });
   });
 
   describe("clineToolAskToAcpToolCall()", () => {
