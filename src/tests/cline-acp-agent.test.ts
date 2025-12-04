@@ -1770,9 +1770,9 @@ describe("Cost Tracking", () => {
         autoStart: false,
       });
       agent.setClient(createMockConnection());
-      await agent.initialize({ clientCapabilities: {} });
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const response = await agent.newSession({});
+      const response = await agent.newSession({ cwd: "/test", mcpServers: [] });
       const session = agent.getSession(response.sessionId);
 
       expect(session).toBeDefined();
@@ -1904,7 +1904,7 @@ describe("Streaming Integration Tests", () => {
       agent.setClient(mockConnection);
       await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
       await agent.prompt({
         sessionId: sessionResponse.sessionId,
         prompt: [{ type: "text", text: "Test" }],
@@ -1998,7 +1998,7 @@ describe("Streaming Integration Tests", () => {
       agent.setClient(mockConnection);
       await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
       await agent.prompt({
         sessionId: sessionResponse.sessionId,
         prompt: [{ type: "text", text: "Test" }],
@@ -2086,19 +2086,20 @@ describe("Streaming Integration Tests", () => {
       agent.setClient(mockConnection);
       await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
       await agent.prompt({
         sessionId: sessionResponse.sessionId,
         prompt: [{ type: "text", text: "Test" }],
       });
 
       // Find the current_mode_update call
-      const modeUpdateCalls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: [{ update: { sessionUpdate: string } }]) => call[0]?.update?.sessionUpdate === "current_mode_update"
+      const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
+      const modeUpdateCalls = calls.filter(
+        (call: unknown[]) => (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate === "current_mode_update"
       );
 
       expect(modeUpdateCalls.length).toBe(1);
-      expect(modeUpdateCalls[0][0].update.currentModeId).toBe("act");
+      expect((modeUpdateCalls[0][0] as { update: { currentModeId: string } }).update.currentModeId).toBe("act");
     });
 
     it("should emit current_mode_update when mode changes from act to plan", async () => {
@@ -2164,19 +2165,20 @@ describe("Streaming Integration Tests", () => {
       agent.setClient(mockConnection);
       await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
       await agent.prompt({
         sessionId: sessionResponse.sessionId,
         prompt: [{ type: "text", text: "Test" }],
       });
 
       // Find the current_mode_update call
-      const modeUpdateCalls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: [{ update: { sessionUpdate: string } }]) => call[0]?.update?.sessionUpdate === "current_mode_update"
+      const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
+      const modeUpdateCalls = calls.filter(
+        (call: unknown[]) => (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate === "current_mode_update"
       );
 
       expect(modeUpdateCalls.length).toBe(1);
-      expect(modeUpdateCalls[0][0].update.currentModeId).toBe("plan");
+      expect((modeUpdateCalls[0][0] as { update: { currentModeId: string } }).update.currentModeId).toBe("plan");
     });
   });
 
@@ -2271,29 +2273,33 @@ describe("Streaming Integration Tests", () => {
       agent.setClient(mockConnection);
       await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
       await agent.prompt({
         sessionId: sessionResponse.sessionId,
         prompt: [{ type: "text", text: "Test" }],
       });
 
       // Find tool_call notifications for the same tool (ts: 1000)
-      const toolCallUpdates = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: [{ update: { sessionUpdate: string; toolCallId?: string } }]) =>
-          call[0]?.update?.sessionUpdate === "tool_call" &&
-          call[0]?.update?.toolCallId === "1000"
+      const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
+      const toolCallUpdates = calls.filter(
+        (call: unknown[]) => {
+          const update = (call[0] as { update?: { sessionUpdate?: string; toolCallId?: string } })?.update;
+          return update?.sessionUpdate === "tool_call" && update?.toolCallId === "1000";
+        }
       );
 
       // Should have 2 tool_call notifications: one in_progress, one completed
       expect(toolCallUpdates.length).toBe(2);
 
       // First should be in_progress
-      expect(toolCallUpdates[0][0].update.status).toBe("in_progress");
-      expect(toolCallUpdates[0][0].update.locations).toEqual([]); // No locations for in_progress
+      const first = toolCallUpdates[0][0] as { update: { status: string; locations: unknown[] } };
+      expect(first.update.status).toBe("in_progress");
+      expect(first.update.locations).toEqual([]); // No locations for in_progress
 
       // Second should be completed with locations
-      expect(toolCallUpdates[1][0].update.status).toBe("completed");
-      expect(toolCallUpdates[1][0].update.locations).toContainEqual({ path: "/workspace/src/index.ts" });
+      const second = toolCallUpdates[1][0] as { update: { status: string; locations: unknown[] } };
+      expect(second.update.status).toBe("completed");
+      expect(second.update.locations).toContainEqual({ path: "/workspace/src/index.ts" });
     });
 
     it("should emit failed status when tool is rejected", async () => {
@@ -2394,21 +2400,23 @@ describe("Streaming Integration Tests", () => {
       agent.setClient(mockConnection);
       await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
 
-      const sessionResponse = await agent.newSession({ cwd: "/test" });
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
       await agent.prompt({
         sessionId: sessionResponse.sessionId,
         prompt: [{ type: "text", text: "Test" }],
       });
 
       // Find tool_call_update with failed status
-      const failedUpdates = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: [{ update: { sessionUpdate: string; status?: string } }]) =>
-          call[0]?.update?.sessionUpdate === "tool_call_update" &&
-          call[0]?.update?.status === "failed"
+      const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
+      const failedUpdates = calls.filter(
+        (call: unknown[]) => {
+          const update = (call[0] as { update?: { sessionUpdate?: string; status?: string } })?.update;
+          return update?.sessionUpdate === "tool_call_update" && update?.status === "failed";
+        }
       );
 
       expect(failedUpdates.length).toBe(1);
-      expect(failedUpdates[0][0].update.toolCallId).toBe("1000");
+      expect((failedUpdates[0][0] as { update: { toolCallId: string } }).update.toolCallId).toBe("1000");
     });
   });
 });
