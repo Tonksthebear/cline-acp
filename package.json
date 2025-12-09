@@ -11,14 +11,17 @@
   },
   "type": "module",
   "files": [
-    "dist/",
+    "dist/cline/",
+    "dist/cline-index.js",
+    "dist/cline-acp.js",
+    "dist/utils.js",
     "proto/",
     "README.md",
-    "LICENSE",
-    "package.json"
+    "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
     "start": "node dist/cline-index.js",
     "dev": "npm run build && npm run start",
     "lint": "eslint src --ext .ts",
@@ -30,7 +33,7 @@
     "test:integration": "RUN_INTEGRATION_TESTS=true vitest run",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm run test:run"
   },
   "keywords": [
     "cline",
