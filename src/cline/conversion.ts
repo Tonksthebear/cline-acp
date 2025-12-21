@@ -85,7 +85,12 @@ export function acpPromptToCline(
       if ("text" in resource && resource.text) {
         // Include resource URI as context
         if (resource.uri) {
-          textParts.push(`[Resource: ${resource.uri}]\n${resource.text}`);
+          // Strip file:// prefix if present and wrap in XML tags
+          let path = resource.uri;
+          if (path.startsWith("file://")) {
+            path = decodeURIComponent(path.slice(7));
+          }
+          textParts.push(`<file_context path="${path}">\n${resource.text}\n</file_context>`);
         } else {
           textParts.push(resource.text);
         }
@@ -594,29 +599,142 @@ type ToolCallContent =
   | { type: "diff"; path: string; newText: string; oldText?: string | null };
 
 /**
+ * Parse results from search/replace extraction
+ */
+interface ParsedDiff {
+  oldText: string;
+  newText: string;
+  startIndex: number;
+  endIndex: number;
+}
+
+/**
+ * Extract all SEARCH/REPLACE blocks from text
+ * Handles variations in markers and same-line code
+ */
+function extractSearchReplaceBlocks(text: string): ParsedDiff[] {
+  const blocks: ParsedDiff[] = [];
+  // Flexible regex for standard and variant markers
+  // Group 1: Optional code on the same line as SEARCH
+  // Group 2: The rest of the SEARCH block
+  // Group 3: The REPLACE block
+  const pattern =
+    /(?:^|\n)(?:-{3,}|<{7})\s*SEARCH\s*(.*?)\n([\s\S]*?)\n[=]{3,}\n([\s\S]*?)\n(?:\+{3,}|>{7})\s*REPLACE/g;
+
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const firstLineSearch = match[1].trim();
+    const restSearch = match[2];
+    const newText = match[3];
+
+    blocks.push({
+      oldText: (firstLineSearch ? firstLineSearch + "\n" : "") + restSearch,
+      newText: newText,
+      startIndex: match.index,
+      endIndex: match.index + match[0].length,
+    });
+  }
+  return blocks;
+}
+
+/**
  * Build ToolCallContent array from parsed tool info
  */
 function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
   const result: ToolCallContent[] = [];
+  const foundDiffs: ToolCallContent[] = [];
 
-  // If we have a diff, include it as diff content
-  // The ACP format expects newText (and optionally oldText)
-  // Cline provides the diff string, so we include it as newText for display
-  if (toolInfo.diff && toolInfo.path) {
-    result.push({
-      type: "diff",
-      path: toolInfo.path,
-      newText: toolInfo.diff,
-    });
+  // 1. Check for granular search/replace in input fields (some MCP tools)
+  if (toolInfo.input && typeof toolInfo.input === "object") {
+    const input = toolInfo.input as Record<string, unknown>;
+    if (
+      input.search &&
+      input.replace &&
+      typeof input.search === "string" &&
+      typeof input.replace === "string"
+    ) {
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path || "",
+        oldText: input.search,
+        newText: input.replace,
+      });
+    }
   }
 
-  // If we have text content (file contents, command output, etc.), include it
-  if (toolInfo.content) {
+  // 2. Check for full write_to_file logic
+  if (
+    toolInfo.type === "write_to_file" &&
+    toolInfo.input &&
+    typeof toolInfo.input === "object"
+  ) {
+    const input = toolInfo.input as Record<string, unknown>;
+    if (input.content && typeof input.content === "string" && toolInfo.path) {
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path,
+        newText: input.content, // oldText undefined implies total overwrite
+      });
+    }
+  }
+
+  // 3. Extract SEARCH/REPLACE blocks from 'diff' field
+  if (toolInfo.diff && toolInfo.path) {
+    const blocks = extractSearchReplaceBlocks(toolInfo.diff);
+    if (blocks.length > 0) {
+      for (const block of blocks) {
+        foundDiffs.push({
+          type: "diff",
+          path: toolInfo.path,
+          oldText: block.oldText,
+          newText: block.newText,
+        });
+      }
+    } else {
+      // Fallback: show the raw block if it's not standard
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path,
+        newText: toolInfo.diff,
+      });
+    }
+  }
+
+  // 4. Extract SEARCH/REPLACE blocks from generic 'content' field
+  // This handles models that explain their code inside the content field
+  let remainingContent: string | undefined = toolInfo.content;
+  if (remainingContent && typeof remainingContent === "string") {
+    const contentStr: string = remainingContent;
+    const blocks = extractSearchReplaceBlocks(contentStr);
+    if (blocks.length > 0) {
+      // Sort blocks from last to first
+      const sortedBlocks = [...blocks].sort((a, b) => b.startIndex - a.startIndex);
+      for (const block of sortedBlocks) {
+        foundDiffs.push({
+          type: "diff",
+          path: toolInfo.path || "file",
+          oldText: block.oldText,
+          newText: block.newText,
+        });
+        // Remove block from the thought text
+        const prefixStr: string = remainingContent!.substring(0, block.startIndex);
+        const suffixStr: string = remainingContent!.substring(block.endIndex);
+        remainingContent = prefixStr + "\n(Diff proposed below)\n" + suffixStr;
+      }
+    }
+  }
+
+  // Final Assembly
+  // Add remaining thought/explanation text first
+  if (remainingContent && remainingContent.trim()) {
     result.push({
       type: "content",
-      content: { type: "text", text: toolInfo.content },
+      content: { type: "text", text: remainingContent.trim() },
     });
   }
+
+  // Add all extracted diffs after the text
+  result.push(...foundDiffs);
 
   return result;
 }
@@ -653,7 +771,15 @@ export function clineToolAskToAcpToolCall(
   workspaceRoot?: string,
 ): SessionNotification {
   const toolInfo = parseToolInfo(msg, workspaceRoot);
-  const kind = mapToolKind(toolInfo.type);
+
+  // Build content array from tool info (includes diffs and preview content)
+  const content = buildToolCallContent(toolInfo);
+
+  // Determine kind - if we have diffs, promote to 'edit' to trigger Zed native diff UI
+  let kind = mapToolKind(toolInfo.type);
+  if (content.some((c) => c.type === "diff")) {
+    kind = "edit";
+  }
 
   const locations: Array<{ path: string; line?: number }> = [];
   if (toolInfo.path) {
@@ -663,9 +789,6 @@ export function clineToolAskToAcpToolCall(
     }
     locations.push(location);
   }
-
-  // Build content array from tool info (includes diffs and preview content)
-  const content = buildToolCallContent(toolInfo);
 
   return {
     sessionId,

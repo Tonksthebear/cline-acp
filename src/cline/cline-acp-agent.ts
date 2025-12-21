@@ -853,12 +853,32 @@ export class ClineAcpAgent implements Agent {
           lastAskType: String(lastMessage?.ask || "").toLowerCase(),
         });
         if (lastMessageIsNew && waitingForInput) {
+          // Send cost & token usage footer
+          const totalTokens = session.totalTokensIn + session.totalTokensOut;
+          const costFooter = `\n\n> 💰 **Cost:** ${session.totalCost.toFixed(4)} | **Tokens:** ${totalTokens}`;
+          await this.client.sessionUpdate({
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: costFooter },
+            },
+          });
           this.log("Breaking: Cline is waiting for user input");
           break;
         }
 
         // Check if task is fully complete (only for new messages)
         if (lastMessageIsNew && isTaskComplete(messages)) {
+          // Send cost & token usage footer
+          const totalTokens = session.totalTokensIn + session.totalTokensOut;
+          const costFooter = `\n\n> 💰 **Cost:** ${session.totalCost.toFixed(4)} | **Tokens:** ${totalTokens}`;
+          await this.client.sessionUpdate({
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: costFooter },
+            },
+          });
           this.log("Breaking: Task is complete");
           break;
         }
@@ -875,9 +895,25 @@ export class ClineAcpAgent implements Agent {
     const lastMessage = messages[messages.length - 1];
     const toolInfo = parseToolInfo(lastMessage);
 
+    // Construct improved display title
+    let displayTitle = toolInfo.title;
+    if (toolInfo.diff || toolInfo.type === "write_to_file" || toolInfo.type === "replace_in_file") {
+      // File edit operation
+      if (toolInfo.path) {
+        displayTitle = `📝 Edit ${toolInfo.path}`;
+      } else {
+        displayTitle = `📝 Edit file`;
+      }
+    } else if (toolInfo.type === "execute_command" && toolInfo.input && typeof toolInfo.input === "object" && "command" in toolInfo.input) {
+      // Command execution
+      const command = String(toolInfo.input.command);
+      displayTitle = `💻 Run: ${command}`;
+    }
+
     this.log("handleApprovalRequest: requesting permission", {
       tool: toolInfo.type,
       title: toolInfo.title,
+      displayTitle,
     });
 
     // Request permission from ACP client
@@ -891,7 +927,7 @@ export class ClineAcpAgent implements Agent {
       toolCall: {
         toolCallId: String(lastMessage.ts),
         rawInput: toolInfo.input,
-        title: toolInfo.title,
+        title: displayTitle,
       },
     });
 
