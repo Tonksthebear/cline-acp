@@ -108,6 +108,7 @@ export interface AskResponseRequest {
   responseType: AskResponseType | string;
   text?: string;
   images?: string[];
+  files?: string[];
 }
 
 export type EmptyRequest = object;
@@ -228,6 +229,7 @@ export interface TaskService {
   newTask(request: NewTaskRequest): Promise<string>;
   askResponse(request: AskResponseRequest): Promise<void>;
   cancelTask(request: EmptyRequest): Promise<void>;
+  taskFeedback(request: { value: string }): Promise<void>;
 }
 
 export interface StateService {
@@ -236,6 +238,7 @@ export interface StateService {
   togglePlanActModeProto(request: TogglePlanActModeRequest): Promise<void>;
   updateAutoApprovalSettings(request: AutoApprovalSettingsRequest): Promise<void>;
   updateSettings(request: UpdateSettingsRequest): Promise<void>;
+  updateTaskSettings(request: { value: string }): Promise<void>;
   getProcessInfo(request?: EmptyRequest): Promise<{ pid: number; address: string }>;
 }
 
@@ -293,6 +296,11 @@ export interface ClineSession {
   cancelled: boolean;
   mode: "plan" | "act";
   isTaskCreated?: boolean; // Track whether we've sent the first message to Cline
+  // Track if we're waiting for user feedback in chat for a specific tool call
+  pendingCorrection?: {
+    toolCallId: string;
+    ts: number;
+  };
   // Cost tracking
   totalCost: number;
   totalTokensIn: number;

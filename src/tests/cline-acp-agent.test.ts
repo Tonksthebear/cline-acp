@@ -56,6 +56,7 @@ function createMockClineClient(): ClineClient {
       newTask: vi.fn().mockResolvedValue("task-123"),
       askResponse: vi.fn().mockResolvedValue(undefined),
       cancelTask: vi.fn().mockResolvedValue(undefined),
+      taskFeedback: vi.fn().mockResolvedValue(undefined),
     },
     State: {
       subscribeToState: vi.fn().mockReturnValue({
@@ -69,6 +70,7 @@ function createMockClineClient(): ClineClient {
       togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
       updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
       updateSettings: vi.fn().mockResolvedValue(undefined),
+      updateTaskSettings: vi.fn().mockResolvedValue(undefined),
       getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
     },
     Ui: {
@@ -517,7 +519,7 @@ describe("ACP to Cline conversion", () => {
 
       expect(clinePrompt.text).toContain("Here is the code: ");
       expect(clinePrompt.text).toContain("const x = 1;");
-      expect(clinePrompt.text).toContain("[Resource: file:///path/to/code.ts]");
+      expect(clinePrompt.text).toContain("<file_context path=\"/path/to/code.ts\">");
     });
 
     it("should create data URL from base64 image data", () => {
@@ -2253,6 +2255,7 @@ describe("Streaming Integration Tests", () => {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
           cancelTask: vi.fn().mockResolvedValue(undefined),
+          taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2266,6 +2269,7 @@ describe("Streaming Integration Tests", () => {
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
           updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2350,6 +2354,7 @@ describe("Streaming Integration Tests", () => {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
           cancelTask: vi.fn().mockResolvedValue(undefined),
+          taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2363,6 +2368,7 @@ describe("Streaming Integration Tests", () => {
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
           updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2438,7 +2444,7 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2451,7 +2457,7 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2527,7 +2533,7 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2540,7 +2546,7 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2642,7 +2648,7 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2655,7 +2661,7 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2773,7 +2779,7 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2786,7 +2792,7 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2832,6 +2838,97 @@ describe("Streaming Integration Tests", () => {
       expect((failedUpdates[0][0] as { update: { toolCallId: string } }).update.toolCallId).toBe(
         "1000",
       );
+    });
+
+    it("should handle 'edit' outcome by rejecting tool and guiding user to chat", async () => {
+      const stateUpdates = [
+        {
+          stateJson: JSON.stringify({
+            mode: "act",
+            clineMessages: [
+              {
+                ts: 1000,
+                type: "ask",
+                ask: "tool",
+                text: JSON.stringify({ tool: "write_to_file", path: "src/index.ts", content: "new" }),
+                partial: false,
+              },
+            ],
+          }),
+        },
+        // We stop here because the agent will trigger handleApprovalRequest which will wait for permission
+      ];
+
+      const mockClineClient: ClineClient = createMockClineClient();
+      mockClineClient.State.subscribeToState = vi.fn().mockImplementation(() => {
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const update of stateUpdates) {
+              yield update;
+            }
+          },
+        };
+      });
+
+      // Mock connection that selects 'edit'
+      const mockConnection = {
+        sessionUpdate: vi.fn().mockResolvedValue(undefined),
+        requestPermission: vi.fn().mockResolvedValue({
+          outcome: { outcome: "selected", optionId: "edit" },
+        }),
+      } as unknown as AgentSideConnection;
+
+      const agent = new ClineAcpAgent({
+        clineClient: mockClineClient,
+        autoStart: false,
+      });
+      agent.setClient(mockConnection);
+      await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+
+      const sessionResponse = await agent.newSession({ cwd: "/test", mcpServers: [] });
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "Test" }],
+      });
+
+      // 1. Verify NO_BUTTON_CLICKED was NOT sent yet (we are waiting for chat input)
+      expect(mockClineClient.Task.askResponse).not.toHaveBeenCalledWith({
+        responseType: "noButtonClicked",
+      });
+
+      // 2. Verify guiding message was sent to user
+      const calls = (mockConnection.sessionUpdate as ReturnType<typeof vi.fn>).mock.calls;
+      const messageChunks = calls.filter(
+        (call: unknown[]) =>
+          (call[0] as { update?: { sessionUpdate?: string } })?.update?.sessionUpdate ===
+          "agent_message_chunk",
+      );
+
+      const guideMessage = messageChunks.find((call: unknown[]) =>
+        (call[0] as any).update.content.text.includes("Provide your correction in the chat"),
+      );
+      expect(guideMessage).toBeDefined();
+
+      // 3. Verify tool call was marked as failed
+      const failedUpdate = calls.find(
+        (call: unknown[]) =>
+          (call[0] as any).update.sessionUpdate === "tool_call_update" &&
+          (call[0] as any).update.status === "failed",
+      );
+      expect(failedUpdate).toBeDefined();
+
+      // 4. Simulate user typing correction in chat
+      await agent.prompt({
+        sessionId: sessionResponse.sessionId,
+        prompt: [{ type: "text", text: "New correction" }],
+      });
+
+      // 5. Verify correction message was sent to Cline as the response to the tool call
+      expect(mockClineClient.Task.askResponse).toHaveBeenCalledWith({
+        responseType: "messageResponse",
+        text: "New correction",
+        images: [],
+      });
     });
   });
 });

@@ -523,7 +523,12 @@ export function parseToolInfo(msg: ClineMessage, workspaceRoot?: string): ClineT
     // Generate title based on tool type
     let title = toolType;
     if (data.path) {
-      title = `${toolType} ${data.path}`;
+      // For edits, a cleaner title helps Zed's native UI
+      if (toolType === "replace_in_file" || toolType === "write_to_file" || toolType === "apply_diff") {
+        title = `Edit ${path.basename(data.path)}`;
+      } else {
+        title = `${toolType} ${data.path}`;
+      }
     } else if (data.command) {
       title = `${toolType}: ${data.command}`;
     }
@@ -619,7 +624,7 @@ function extractSearchReplaceBlocks(text: string): ParsedDiff[] {
   // Group 2: The rest of the SEARCH block
   // Group 3: The REPLACE block
   const pattern =
-    /(?:^|\n)(?:-{3,}|<{7})\s*SEARCH\s*(.*?)\n([\s\S]*?)\n[=]{3,}\n([\s\S]*?)\n(?:\+{3,}|>{7})\s*REPLACE/g;
+    /(?:^|\n)(?:-{3,}|<{7})\s*SEARCH\s*(.*?)\n([\s\S]*?)\n[=]{3,}\s*\n([\s\S]*?)\n(?:\+{3,}|>{7})\s*REPLACE/g;
 
   let match;
   while ((match = pattern.exec(text)) !== null) {
@@ -647,6 +652,8 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
   // 1. Check for granular search/replace in input fields (some MCP tools)
   if (toolInfo.input && typeof toolInfo.input === "object") {
     const input = toolInfo.input as Record<string, unknown>;
+    
+    // Standard SEARCH/REPLACE in fields (used by some models)
     if (
       input.search &&
       input.replace &&
@@ -660,11 +667,26 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
         newText: input.replace,
       });
     }
+    
+    // Alternative field names (common in some MCP tools)
+    if (
+      input.old_text &&
+      input.new_text &&
+      typeof input.old_text === "string" &&
+      typeof input.new_text === "string"
+    ) {
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path || "",
+        oldText: input.old_text,
+        newText: input.new_text,
+      });
+    }
   }
 
   // 2. Check for full write_to_file logic
   if (
-    toolInfo.type === "write_to_file" &&
+    (toolInfo.type === "write_to_file" || toolInfo.type === "insert_content") &&
     toolInfo.input &&
     typeof toolInfo.input === "object"
   ) {
@@ -678,25 +700,28 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
     }
   }
 
-  // 3. Extract SEARCH/REPLACE blocks from 'diff' field
-  if (toolInfo.diff && toolInfo.path) {
-    const blocks = extractSearchReplaceBlocks(toolInfo.diff);
-    if (blocks.length > 0) {
-      for (const block of blocks) {
+  // 3. Extract SEARCH/REPLACE blocks from 'diff' or 'content' field in replace_in_file/apply_diff
+  if ((toolInfo.type === "replace_in_file" || toolInfo.type === "apply_diff") && toolInfo.path) {
+    const diffSource = toolInfo.diff || toolInfo.content;
+    if (diffSource) {
+      const blocks = extractSearchReplaceBlocks(diffSource);
+      if (blocks.length > 0) {
+        for (const block of blocks) {
+          foundDiffs.push({
+            type: "diff",
+            path: toolInfo.path,
+            oldText: block.oldText,
+            newText: block.newText,
+          });
+        }
+      } else {
+        // Fallback: show the raw block if it's not standard SEARCH/REPLACE format
         foundDiffs.push({
           type: "diff",
           path: toolInfo.path,
-          oldText: block.oldText,
-          newText: block.newText,
+          newText: diffSource,
         });
       }
-    } else {
-      // Fallback: show the raw block if it's not standard
-      foundDiffs.push({
-        type: "diff",
-        path: toolInfo.path,
-        newText: toolInfo.diff,
-      });
     }
   }
 
@@ -725,16 +750,20 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
   }
 
   // Final Assembly
-  // Add remaining thought/explanation text first
-  if (remainingContent && remainingContent.trim()) {
-    result.push({
-      type: "content",
-      content: { type: "text", text: remainingContent.trim() },
-    });
+  // CRITICAL: If we have diffs, we only send the diffs to ensure Zed promotes this
+  // ToolCall to the native editor diff UI. Any reasoning text is already
+  // being sent in the main message stream.
+  if (foundDiffs.length > 0) {
+    result.push(...foundDiffs);
+  } else {
+    // Only send text if there are no diffs
+    if (remainingContent && remainingContent.trim()) {
+      result.push({
+        type: "content",
+        content: { type: "text", text: remainingContent.trim() },
+      });
+    }
   }
-
-  // Add all extracted diffs after the text
-  result.push(...foundDiffs);
 
   return result;
 }
@@ -752,6 +781,8 @@ function mapToolKind(
     read_file: "read",
     write_to_file: "edit",
     replace_in_file: "edit",
+    apply_diff: "edit", // Support apply_diff specifically
+    insert_content: "edit", // Support insert_content specifically
     execute_command: "execute",
     search_files: "search",
     list_files: "search",
@@ -801,6 +832,9 @@ export function clineToolAskToAcpToolCall(
       rawInput: toolInfo.input,
       content,
       locations,
+      _meta: {
+        tool: toolInfo.type,
+      },
     },
   };
 }

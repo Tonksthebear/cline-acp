@@ -8,11 +8,13 @@ option go_package = "github.com/cline/grpc-go/cline";
 option java_multiple_files = true;
 option java_package = "bot.cline.proto";
 
+// Enum for ClineMessage type
 enum ClineMessageType {
   ASK = 0;
   SAY = 1;
 }
 
+// Enum for ClineAsk types
 enum ClineAsk {
   FOLLOWUP = 0;
   PLAN_MODE_RESPOND = 1;
@@ -33,6 +35,7 @@ enum ClineAsk {
   ACT_MODE_RESPOND = 16;
 }
 
+// Enum for ClineSay types
 enum ClineSay {
   TASK = 0;
   ERROR = 1;
@@ -63,8 +66,10 @@ enum ClineSay {
   INFO = 26;
   TASK_PROGRESS = 27;
   ERROR_RETRY = 28;
+  GENERATE_EXPLANATION = 29;
 }
 
+// Enum for ClineSayTool tool types
 enum ClineSayToolType {
   EDITED_EXISTING_FILE = 0;
   NEW_FILE_CREATED = 1;
@@ -77,6 +82,7 @@ enum ClineSayToolType {
   FILE_DELETED = 8;
 }
 
+// Enum for browser actions
 enum BrowserAction {
   LAUNCH = 0;
   CLICK = 1;
@@ -86,22 +92,26 @@ enum BrowserAction {
   CLOSE = 5;
 }
 
+// Enum for MCP server request types
 enum McpServerRequestType {
   USE_MCP_TOOL = 0;
   ACCESS_MCP_RESOURCE = 1;
 }
 
+// Enum for API request cancel reasons
 enum ClineApiReqCancelReason {
   STREAMING_FAILED = 0;
   USER_CANCELLED = 1;
   RETRIES_EXHAUSTED = 2;
 }
 
+// Message for conversation history deleted range
 message ConversationHistoryDeletedRange {
   int32 start_index = 1;
   int32 end_index = 2;
 }
 
+// Message for ClineSayTool
 message ClineSayTool {
   ClineSayToolType tool = 1;
   string path = 2;
@@ -112,12 +122,14 @@ message ClineSayTool {
   bool operation_is_located_in_workspace = 7;
 }
 
+// Message for ClineSayBrowserAction
 message ClineSayBrowserAction {
   BrowserAction action = 1;
   string coordinate = 2;
   string text = 3;
 }
 
+// Message for BrowserActionResult
 message BrowserActionResult {
   string screenshot = 1;
   string logs = 2;
@@ -125,6 +137,7 @@ message BrowserActionResult {
   string current_mouse_position = 4;
 }
 
+// Message for ClineAskUseMcpServer
 message ClineAskUseMcpServer {
   string server_name = 1;
   McpServerRequestType type = 2;
@@ -133,22 +146,26 @@ message ClineAskUseMcpServer {
   string uri = 5;
 }
 
+// Message for ClinePlanModeResponse
 message ClinePlanModeResponse {
   string response = 1;
   repeated string options = 2;
   string selected = 3;
 }
 
+// Message for ClineAskQuestion
 message ClineAskQuestion {
   string question = 1;
   repeated string options = 2;
   string selected = 3;
 }
 
+// Message for ClineAskNewTask
 message ClineAskNewTask {
   string context = 1;
 }
 
+// Message for API request retry status
 message ApiReqRetryStatus {
   int32 attempt = 1;
   int32 max_attempts = 2;
@@ -156,6 +173,7 @@ message ApiReqRetryStatus {
   string error_snippet = 4;
 }
 
+// Message for ClineApiReqInfo
 message ClineApiReqInfo {
   string request = 1;
   int32 tokens_in = 2;
@@ -173,6 +191,7 @@ message ClineModelInfo {
   string model_id = 2;
 }
 
+// Main ClineMessage type
 message ClineMessage {
   int64 ts = 1;
   ClineMessageType type = 2;
@@ -188,6 +207,8 @@ message ClineMessage {
   bool is_operation_outside_workspace = 12;
   int32 conversation_history_index = 13;
   ConversationHistoryDeletedRange conversation_history_deleted_range = 14;
+
+  // Additional fields for specific ask/say types
   ClineSayTool say_tool = 15;
   ClineSayBrowserAction say_browser_action = 16;
   BrowserActionResult browser_action_result = 17;
@@ -199,22 +220,56 @@ message ClineMessage {
   ClineModelInfo model_info = 23;
 }
 
+// UiService provides methods for managing UI interactions
 service UiService {
+  // Scrolls to a specific settings section in the settings view
   rpc scrollToSettings(StringRequest) returns (KeyValuePair);
+
+  // Sets the terminal execution mode (vscodeTerminal or backgroundExec)
   rpc setTerminalExecutionMode(BooleanRequest) returns (KeyValuePair);
+
+  // Marks the current announcement as shown and returns whether an announcement should still be shown
   rpc onDidShowAnnouncement(EmptyRequest) returns (Boolean);
+
+  // Subscribe to addToInput events (when user adds content via context menu)
   rpc subscribeToAddToInput(EmptyRequest) returns (stream String);
+
+  // Subscribe to MCP button clicked events
   rpc subscribeToMcpButtonClicked(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to history button click events
   rpc subscribeToHistoryButtonClicked(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to chat button clicked events (when the chat button is clicked in VSCode)
   rpc subscribeToChatButtonClicked(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to account button click events
   rpc subscribeToAccountButtonClicked(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to settings button clicked events
   rpc subscribeToSettingsButtonClicked(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to partial message updates (streaming Cline messages as they're built)
   rpc subscribeToPartialMessage(EmptyRequest) returns (stream ClineMessage);
+
+  // Initialize webview when it launches
   rpc initializeWebview(EmptyRequest) returns (Empty);
+
+  // Subscribe to relinquish control events
   rpc subscribeToRelinquishControl(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to focus chat input events
   rpc subscribeToFocusChatInput(EmptyRequest) returns (stream Empty);
+
+  // Subscribe to webview visibility change events
   rpc subscribeToDidBecomeVisible(EmptyRequest) returns (stream Empty);
+
+  // Returns the HTML for the webview index page. This is only used by external clients, not by the vscode webview.
   rpc getWebviewHtml(EmptyRequest) returns (String);
+
+  // Opens a URL in the default browser
   rpc openUrl(StringRequest) returns (Empty);
+
+  // Opens the Cline walkthrough
   rpc openWalkthrough(EmptyRequest) returns (Empty);
 }

@@ -200,6 +200,13 @@ export async function createClineClient(address: string): Promise<ClineClient> {
           "cancelTask",
         )({});
       },
+
+      async taskFeedback(request): Promise<void> {
+        await promisifyUnary<typeof request, Record<string, never>>(
+          taskClient,
+          "taskFeedback",
+        )(request);
+      },
     },
 
     State: {
@@ -238,6 +245,13 @@ export async function createClineClient(address: string): Promise<ClineClient> {
         await promisifyUnary<typeof request, Record<string, never>>(
           stateClient,
           "updateSettings",
+        )(request);
+      },
+
+      async updateTaskSettings(request): Promise<void> {
+        await promisifyUnary<typeof request, Record<string, never>>(
+          stateClient,
+          "updateTaskSettings",
         )(request);
       },
 

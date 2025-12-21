@@ -36,6 +36,7 @@ import {
   clineTaskProgressToAcpPlan,
   clineSayToolToAcpToolCall,
   clineSayToolToAcpToolCallInProgress,
+  clineToolAskToAcpToolCall,
   createCurrentModeUpdate,
   createToolCallUpdate,
   extractCostInfo,
@@ -380,7 +381,21 @@ export class ClineAcpAgent implements Agent {
         }
       }
 
-      if (!session.isTaskCreated) {
+      if (session.pendingCorrection) {
+        // If we were waiting for a correction, send the user's text as the response to the tool call
+        this.log("prompt: sending user feedback as correction response", {
+          toolCallId: session.pendingCorrection.toolCallId,
+          text: clinePrompt.text,
+        });
+        const pending = session.pendingCorrection;
+        session.pendingCorrection = undefined; // Clear pending state
+
+        await this.clineClient.Task.askResponse({
+          responseType: AskResponseType.MESSAGE_RESPONSE,
+          text: clinePrompt.text,
+          images: clinePrompt.images || [],
+        });
+      } else if (!session.isTaskCreated) {
         // First message - create a new task
         const taskId = await this.clineClient.Task.newTask({
           text: clinePrompt.text,
@@ -843,45 +858,29 @@ export class ClineAcpAgent implements Agent {
           continue;
         }
 
-        // Check if Cline is waiting for user input (turn complete)
-        // This happens with plan_mode_respond, followup, completion_result, api_req_failed
-        // Only break if the waiting message is NEW (not from before this prompt)
-        const waitingForInput = isWaitingForUserInput(messages, (msg, data) => this.log(msg, data));
-        this.log("Checking if waiting for user input:", {
-          lastMessageIsNew,
-          waitingForInput,
-          lastAskType: String(lastMessage?.ask || "").toLowerCase(),
-        });
-        if (lastMessageIsNew && waitingForInput) {
-          // Send cost & token usage footer
-          const totalTokens = session.totalTokensIn + session.totalTokensOut;
-          const costFooter = `\n\n> 💰 **Cost:** ${session.totalCost.toFixed(4)} | **Tokens:** ${totalTokens}`;
-          await this.client.sessionUpdate({
-            sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: costFooter },
-            },
-          });
-          this.log("Breaking: Cline is waiting for user input");
-          break;
-        }
+      // Check if Cline is waiting for user input (turn complete)
+      // This happens with plan_mode_respond, followup, completion_result, api_req_failed
+      // Only break if the waiting message is NEW (not from before this prompt)
+      const waitingForInput = isWaitingForUserInput(messages, (msg, data) => this.log(msg, data));
+      this.log("Checking if waiting for user input:", {
+        lastMessageIsNew,
+        waitingForInput,
+        lastAskType: String(lastMessage?.ask || "").toLowerCase(),
+      });
+      if (lastMessageIsNew && waitingForInput) {
+        // Send cost & token usage footer
+        await this.sendCostFooter(sessionId, session);
+        this.log("Breaking: Cline is waiting for user input");
+        break;
+      }
 
-        // Check if task is fully complete (only for new messages)
-        if (lastMessageIsNew && isTaskComplete(messages)) {
-          // Send cost & token usage footer
-          const totalTokens = session.totalTokensIn + session.totalTokensOut;
-          const costFooter = `\n\n> 💰 **Cost:** ${session.totalCost.toFixed(4)} | **Tokens:** ${totalTokens}`;
-          await this.client.sessionUpdate({
-            sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: costFooter },
-            },
-          });
-          this.log("Breaking: Task is complete");
-          break;
-        }
+      // Check if task is fully complete (only for new messages)
+      if (lastMessageIsNew && isTaskComplete(messages)) {
+        // Send cost & token usage footer
+        await this.sendCostFooter(sessionId, session);
+        this.log("Breaking: Task is complete");
+        break;
+      }
       }
       this.log("Stream loop ended normally", { stateUpdateCount });
     } catch (error) {
@@ -891,43 +890,93 @@ export class ClineAcpAgent implements Agent {
     this.log("processStreamingResponses: finished");
   }
 
+  /**
+   * Send a footer message with cost and context window usage
+   */
+  private async sendCostFooter(sessionId: string, session: ClineSession): Promise<void> {
+    const totalTokens = session.totalTokensIn + session.totalTokensOut;
+    let contextInfo = "";
+
+    if (this.clineClient) {
+      try {
+        const state = await this.clineClient.State.getLatestState();
+        const stateData = JSON.parse(state.stateJson || "{}");
+        const apiConfig = stateData.apiConfiguration || {};
+        const provider = (apiConfig.planModeApiProvider || "").toLowerCase();
+
+        // Get context window for the current model
+        const planModelId =
+          apiConfig.planModeOpenRouterModelId ||
+          apiConfig.planModeApiModelId ||
+          apiConfig.apiModelId;
+
+        if (planModelId) {
+          // If OpenRouter/Cline, we can get the context window from the models list
+          if (provider === "cline" || provider === "openrouter" || !provider) {
+            const modelsResponse = await this.clineClient.Models.refreshOpenRouterModels().catch(
+              () => null,
+            );
+            if (modelsResponse?.models && modelsResponse.models[planModelId]) {
+              const maxTokens = modelsResponse.models[planModelId].contextWindow;
+              if (maxTokens) {
+                const percentage = ((totalTokens / maxTokens) * 100).toFixed(1);
+                contextInfo = ` | **Context:** ${totalTokens.toLocaleString()} / ${maxTokens.toLocaleString()} (${percentage}%)`;
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore errors fetching context info
+      }
+    }
+
+    const costFooter = `\n\n> 💰 **Cost:** $${session.totalCost.toFixed(4)} | **Tokens:** ${totalTokens.toLocaleString()}${contextInfo}`;
+
+    await this.client.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: costFooter },
+      },
+    });
+  }
+
   private async handleApprovalRequest(sessionId: string, messages: ClineMessage[]): Promise<void> {
     const lastMessage = messages[messages.length - 1];
-    const toolInfo = parseToolInfo(lastMessage);
 
-    // Construct improved display title
-    let displayTitle = toolInfo.title;
-    if (toolInfo.diff || toolInfo.type === "write_to_file" || toolInfo.type === "replace_in_file") {
-      // File edit operation
-      if (toolInfo.path) {
-        displayTitle = `📝 Edit ${toolInfo.path}`;
-      } else {
-        displayTitle = `📝 Edit file`;
-      }
-    } else if (toolInfo.type === "execute_command" && toolInfo.input && typeof toolInfo.input === "object" && "command" in toolInfo.input) {
-      // Command execution
-      const command = String(toolInfo.input.command);
-      displayTitle = `💻 Run: ${command}`;
+    // Delegate to conversion logic to get full ToolCall metadata
+    const state = await this.clineClient?.State.getLatestState();
+    const workspaceRoot = state ? extractWorkspaceRoot(state.stateJson || "{}") : undefined;
+    const notification = clineToolAskToAcpToolCall(lastMessage, sessionId, workspaceRoot);
+    const toolCallPayload = notification.update;
+
+    if (toolCallPayload.sessionUpdate !== "tool_call") {
+      return;
     }
 
     this.log("handleApprovalRequest: requesting permission", {
-      tool: toolInfo.type,
-      title: toolInfo.title,
-      displayTitle,
+      toolCallId: toolCallPayload.toolCallId,
+      kind: toolCallPayload.kind,
+      title: toolCallPayload.title,
+      contentCount: toolCallPayload.content?.length,
     });
 
-    // Request permission from ACP client
+    // Request permission from ACP client with FULL metadata
     const response = await this.client.requestPermission({
       options: [
         { kind: "allow_always", name: "Always Allow", optionId: "allow_always" },
         { kind: "allow_once", name: "Allow", optionId: "allow" },
         { kind: "reject_once", name: "Reject", optionId: "reject" },
+        { kind: "reject_once", name: "Edit/Correction", optionId: "edit" },
       ],
       sessionId,
       toolCall: {
-        toolCallId: String(lastMessage.ts),
-        rawInput: toolInfo.input,
-        title: displayTitle,
+        toolCallId: toolCallPayload.toolCallId,
+        kind: toolCallPayload.kind,
+        title: toolCallPayload.title,
+        content: toolCallPayload.content,
+        locations: toolCallPayload.locations,
+        rawInput: toolCallPayload.rawInput,
       },
     });
 
@@ -935,7 +984,7 @@ export class ClineAcpAgent implements Agent {
 
     // Send response to Cline
     if (this.clineClient) {
-      const outcome = response.outcome;
+      const outcome = response.outcome as any;
       if (
         outcome?.outcome === "selected" &&
         (outcome.optionId === "allow" || outcome.optionId === "allow_always")
@@ -945,6 +994,50 @@ export class ClineAcpAgent implements Agent {
           responseType: AskResponseType.YES_BUTTON_CLICKED,
         });
         this.log("handleApprovalRequest: YES sent successfully");
+      } else if (outcome?.outcome === "selected" && outcome.optionId === "edit") {
+        // If edit is selected, we don't respond to the tool call yet.
+        // Instead, we mark the session as waiting for correction.
+        // The next user prompt will be used as the response to this tool call.
+        this.log("handleApprovalRequest: edit requested, waiting for user input in chat");
+
+        const toolCallId = String(lastMessage.ts);
+        const sessionObj = this.sessions[sessionId];
+        if (sessionObj) {
+          sessionObj.pendingCorrection = {
+            toolCallId,
+            ts: lastMessage.ts,
+          };
+        }
+
+        // Mark tool call as completed (failed/re-generated) from Zed's perspective
+        // so it doesn't stay in "Waiting Confirmation" state indefinitely.
+        await this.client.sessionUpdate(createToolCallUpdate(sessionId, toolCallId, "failed"));
+
+        // Guide user to provide feedback in chat
+        await this.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `\n\n> 💡 **Tip**: Provide your correction in the chat below, and I'll generate a new suggestion.`,
+            },
+          },
+        });
+
+        // We return early without sending ANY gRPC response to Cline yet.
+        // The response will be sent in the next 'prompt' call.
+        return;
+      } else if (outcome?.outcome === "selected" && outcome.optionId === "edit" && outcome.message) {
+        // Correction provided via message (legacy fallback if client supports it)
+        this.log("handleApprovalRequest: sending correction to Cline", {
+          correction: outcome.message,
+        });
+        await this.clineClient.Task.askResponse({
+          responseType: AskResponseType.MESSAGE_RESPONSE,
+          text: outcome.message,
+        });
+        this.log("handleApprovalRequest: correction sent successfully");
       } else {
         this.log("handleApprovalRequest: sending NO to Cline");
         await this.clineClient.Task.askResponse({
