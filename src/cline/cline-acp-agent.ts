@@ -47,7 +47,6 @@ import {
   isTaskComplete,
   isWaitingForUserInput,
   needsApproval,
-  parseToolInfo,
 } from "./conversion.js";
 import { ClineProcessManager } from "./process-manager.js";
 import { createClineClient } from "./grpc-client.js";
@@ -822,6 +821,9 @@ export class ClineAcpAgent implements Agent {
               );
             }
             await this.client.sessionUpdate(notification);
+            
+            // Send cost footer on EVERY message for continuous tracking
+            await this.sendCostFooter(sessionId, session);
           }
         }
 
@@ -894,7 +896,7 @@ export class ClineAcpAgent implements Agent {
    * Send a footer message with cost and context window usage
    */
   private async sendCostFooter(sessionId: string, session: ClineSession): Promise<void> {
-    const totalTokens = session.totalTokensIn + session.totalTokensOut;
+
     let contextInfo = "";
 
     if (this.clineClient) {
@@ -919,8 +921,7 @@ export class ClineAcpAgent implements Agent {
             if (modelsResponse?.models && modelsResponse.models[planModelId]) {
               const maxTokens = modelsResponse.models[planModelId].contextWindow;
               if (maxTokens) {
-                const percentage = ((totalTokens / maxTokens) * 100).toFixed(1);
-                contextInfo = ` | **Context:** ${totalTokens.toLocaleString()} / ${maxTokens.toLocaleString()} (${percentage}%)`;
+                contextInfo = ` **Max context:** ${maxTokens.toLocaleString()}, **Total token In:** ${session.totalTokensIn}, **Total token Out:** ${session.totalTokensOut}`;
               }
             }
           }
@@ -930,7 +931,7 @@ export class ClineAcpAgent implements Agent {
       }
     }
 
-    const costFooter = `\n\n> 💰 **Cost:** $${session.totalCost.toFixed(4)} | **Tokens:** ${totalTokens.toLocaleString()}${contextInfo}`;
+    const costFooter = `\n\n> 💰 **Cost:** $${session.totalCost.toFixed(4)} | \n **Context Info:** \n ${contextInfo}`;
 
     await this.client.sessionUpdate({
       sessionId,
