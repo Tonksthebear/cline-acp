@@ -386,7 +386,6 @@ export class ClineAcpAgent implements Agent {
           toolCallId: session.pendingCorrection.toolCallId,
           text: clinePrompt.text,
         });
-        const pending = session.pendingCorrection;
         session.pendingCorrection = undefined; // Clear pending state
 
         await this.clineClient.Task.askResponse({
@@ -1028,20 +1027,6 @@ export class ClineAcpAgent implements Agent {
         // We return early without sending ANY gRPC response to Cline yet.
         // The response will be sent in the next 'prompt' call.
         return;
-      } else if (
-        outcome?.outcome === "selected" &&
-        outcome.optionId === "edit" &&
-        outcome.message
-      ) {
-        // Correction provided via message (legacy fallback if client supports it)
-        this.log("handleApprovalRequest: sending correction to Cline", {
-          correction: outcome.message,
-        });
-        await this.clineClient.Task.askResponse({
-          responseType: AskResponseType.MESSAGE_RESPONSE,
-          text: outcome.message,
-        });
-        this.log("handleApprovalRequest: correction sent successfully");
       } else {
         this.log("handleApprovalRequest: sending NO to Cline");
         await this.clineClient.Task.askResponse({
