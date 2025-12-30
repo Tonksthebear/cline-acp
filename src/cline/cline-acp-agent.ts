@@ -821,7 +821,7 @@ export class ClineAcpAgent implements Agent {
               );
             }
             await this.client.sessionUpdate(notification);
-            
+
             // Send cost footer on EVERY message for continuous tracking
             await this.sendCostFooter(sessionId, session);
           }
@@ -860,29 +860,29 @@ export class ClineAcpAgent implements Agent {
           continue;
         }
 
-      // Check if Cline is waiting for user input (turn complete)
-      // This happens with plan_mode_respond, followup, completion_result, api_req_failed
-      // Only break if the waiting message is NEW (not from before this prompt)
-      const waitingForInput = isWaitingForUserInput(messages, (msg, data) => this.log(msg, data));
-      this.log("Checking if waiting for user input:", {
-        lastMessageIsNew,
-        waitingForInput,
-        lastAskType: String(lastMessage?.ask || "").toLowerCase(),
-      });
-      if (lastMessageIsNew && waitingForInput) {
-        // Send cost & token usage footer
-        await this.sendCostFooter(sessionId, session);
-        this.log("Breaking: Cline is waiting for user input");
-        break;
-      }
+        // Check if Cline is waiting for user input (turn complete)
+        // This happens with plan_mode_respond, followup, completion_result, api_req_failed
+        // Only break if the waiting message is NEW (not from before this prompt)
+        const waitingForInput = isWaitingForUserInput(messages, (msg, data) => this.log(msg, data));
+        this.log("Checking if waiting for user input:", {
+          lastMessageIsNew,
+          waitingForInput,
+          lastAskType: String(lastMessage?.ask || "").toLowerCase(),
+        });
+        if (lastMessageIsNew && waitingForInput) {
+          // Send cost & token usage footer
+          await this.sendCostFooter(sessionId, session);
+          this.log("Breaking: Cline is waiting for user input");
+          break;
+        }
 
-      // Check if task is fully complete (only for new messages)
-      if (lastMessageIsNew && isTaskComplete(messages)) {
-        // Send cost & token usage footer
-        await this.sendCostFooter(sessionId, session);
-        this.log("Breaking: Task is complete");
-        break;
-      }
+        // Check if task is fully complete (only for new messages)
+        if (lastMessageIsNew && isTaskComplete(messages)) {
+          // Send cost & token usage footer
+          await this.sendCostFooter(sessionId, session);
+          this.log("Breaking: Task is complete");
+          break;
+        }
       }
       this.log("Stream loop ended normally", { stateUpdateCount });
     } catch (error) {
@@ -896,7 +896,6 @@ export class ClineAcpAgent implements Agent {
    * Send a footer message with cost and context window usage
    */
   private async sendCostFooter(sessionId: string, session: ClineSession): Promise<void> {
-
     let contextInfo = "";
 
     if (this.clineClient) {
@@ -1029,7 +1028,11 @@ export class ClineAcpAgent implements Agent {
         // We return early without sending ANY gRPC response to Cline yet.
         // The response will be sent in the next 'prompt' call.
         return;
-      } else if (outcome?.outcome === "selected" && outcome.optionId === "edit" && outcome.message) {
+      } else if (
+        outcome?.outcome === "selected" &&
+        outcome.optionId === "edit" &&
+        outcome.message
+      ) {
         // Correction provided via message (legacy fallback if client supports it)
         this.log("handleApprovalRequest: sending correction to Cline", {
           correction: outcome.message,

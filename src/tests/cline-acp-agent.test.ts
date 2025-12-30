@@ -519,7 +519,7 @@ describe("ACP to Cline conversion", () => {
 
       expect(clinePrompt.text).toContain("Here is the code: ");
       expect(clinePrompt.text).toContain("const x = 1;");
-      expect(clinePrompt.text).toContain("<file_context path=\"/path/to/code.ts\">");
+      expect(clinePrompt.text).toContain('<file_context path="/path/to/code.ts">');
     });
 
     it("should create data URL from base64 image data", () => {
@@ -554,7 +554,8 @@ describe("ACP to Cline conversion", () => {
     });
 
     it("should default to image/png when MIME type not provided", () => {
-      const pngData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+      const pngData =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
       const clinePrompt = acpPromptToCline({
         sessionId: "test",
@@ -636,7 +637,8 @@ describe("ACP to Cline conversion", () => {
     });
 
     it("should handle combined images and file attachments", () => {
-      const pngData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+      const pngData =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
       const clinePrompt = acpPromptToCline({
         sessionId: "test",
@@ -2444,7 +2446,8 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+          taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2457,7 +2460,8 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2533,7 +2537,8 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+          taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2546,7 +2551,8 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2648,7 +2654,8 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+          taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2661,7 +2668,8 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2779,7 +2787,8 @@ describe("Streaming Integration Tests", () => {
         Task: {
           newTask: vi.fn().mockResolvedValue("task-123"),
           askResponse: vi.fn().mockResolvedValue(undefined),
-          cancelTask: vi.fn().mockResolvedValue(undefined), taskFeedback: vi.fn().mockResolvedValue(undefined),
+          cancelTask: vi.fn().mockResolvedValue(undefined),
+          taskFeedback: vi.fn().mockResolvedValue(undefined),
         },
         State: {
           subscribeToState: vi.fn().mockReturnValue({
@@ -2792,7 +2801,8 @@ describe("Streaming Integration Tests", () => {
           getLatestState: vi.fn().mockResolvedValue({ stateJson: "{}" }),
           togglePlanActModeProto: vi.fn().mockResolvedValue(undefined),
           updateAutoApprovalSettings: vi.fn().mockResolvedValue(undefined),
-          updateSettings: vi.fn().mockResolvedValue(undefined), updateTaskSettings: vi.fn().mockResolvedValue(undefined),
+          updateSettings: vi.fn().mockResolvedValue(undefined),
+          updateTaskSettings: vi.fn().mockResolvedValue(undefined),
           getProcessInfo: vi.fn().mockResolvedValue({ pid: 1234, address: "localhost:50051" }),
         },
         Ui: {
@@ -2850,7 +2860,11 @@ describe("Streaming Integration Tests", () => {
                 ts: 1000,
                 type: "ask",
                 ask: "tool",
-                text: JSON.stringify({ tool: "write_to_file", path: "src/index.ts", content: "new" }),
+                text: JSON.stringify({
+                  tool: "write_to_file",
+                  path: "src/index.ts",
+                  content: "new",
+                }),
                 partial: false,
               },
             ],

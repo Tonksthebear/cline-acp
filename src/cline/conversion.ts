@@ -47,8 +47,7 @@ export function acpPromptToCline(
 
       if ("data" in chunk && chunk.data && chunk.data.length > 0) {
         // Use base64 data directly to create data URL
-        const mimeType =
-          "mimeType" in chunk ? (chunk.mimeType as string) : "image/png";
+        const mimeType = "mimeType" in chunk ? (chunk.mimeType as string) : "image/png";
         imageDataUrl = `data:${mimeType};base64,${chunk.data}`;
         debug?.("created data URL from base64", {
           mimeType,
@@ -524,7 +523,11 @@ export function parseToolInfo(msg: ClineMessage, workspaceRoot?: string): ClineT
     let title = toolType;
     if (data.path) {
       // For edits, a cleaner title helps Zed's native UI
-      if (toolType === "replace_in_file" || toolType === "write_to_file" || toolType === "apply_diff") {
+      if (
+        toolType === "replace_in_file" ||
+        toolType === "write_to_file" ||
+        toolType === "apply_diff"
+      ) {
         title = `Edit ${path.basename(data.path)}`;
       } else {
         title = `${toolType} ${data.path}`;
@@ -652,7 +655,7 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
   // 1. Check for granular search/replace in input fields (some MCP tools)
   if (toolInfo.input && typeof toolInfo.input === "object") {
     const input = toolInfo.input as Record<string, unknown>;
-    
+
     // Standard SEARCH/REPLACE in fields (used by some models)
     if (
       input.search &&
@@ -667,7 +670,7 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
         newText: input.replace,
       });
     }
-    
+
     // Alternative field names (common in some MCP tools)
     if (
       input.old_text &&
