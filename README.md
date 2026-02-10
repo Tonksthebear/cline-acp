@@ -1,3 +1,6 @@
+> **Archived / Redundant:** Cline now directly supports ACP, so this repository is no longer needed.  
+> See: https://docs.cline.bot/cline-cli/acp-editor-integrations
+
 # Cline ACP
 
 An [ACP-compatible](https://agentclientprotocol.com) coding agent powered by [Cline](https://github.com/cline/cline).
