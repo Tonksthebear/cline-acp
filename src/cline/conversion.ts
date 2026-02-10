@@ -47,8 +47,7 @@ export function acpPromptToCline(
 
       if ("data" in chunk && chunk.data && chunk.data.length > 0) {
         // Use base64 data directly to create data URL
-        const mimeType =
-          "mimeType" in chunk ? (chunk.mimeType as string) : "image/png";
+        const mimeType = "mimeType" in chunk ? (chunk.mimeType as string) : "image/png";
         imageDataUrl = `data:${mimeType};base64,${chunk.data}`;
         debug?.("created data URL from base64", {
           mimeType,
@@ -85,7 +84,12 @@ export function acpPromptToCline(
       if ("text" in resource && resource.text) {
         // Include resource URI as context
         if (resource.uri) {
-          textParts.push(`[Resource: ${resource.uri}]\n${resource.text}`);
+          // Strip file:// prefix if present and wrap in XML tags
+          let path = resource.uri;
+          if (path.startsWith("file://")) {
+            path = decodeURIComponent(path.slice(7));
+          }
+          textParts.push(`<file_context path="${path}">\n${resource.text}\n</file_context>`);
         } else {
           textParts.push(resource.text);
         }
@@ -220,8 +224,7 @@ export function clineMessageToAcpNotification(
     if (askType === "api_req_failed") {
       try {
         const errorData = JSON.parse(msg.text || "{}");
-        const errorMessage =
-          errorData.message || "API request failed. Please check your configuration.";
+        const errorMessage = errorData.message || "API request failed. Please check your configuration.";
         return {
           sessionId,
           update: {
@@ -324,12 +327,7 @@ function looksLikeToolJson(text: string): boolean {
       }
       // Has tool-like fields: path + content/diff/regex/filePattern
       if ("path" in parsed) {
-        if (
-          "content" in parsed ||
-          "diff" in parsed ||
-          "regex" in parsed ||
-          "filePattern" in parsed
-        ) {
+        if ("content" in parsed || "diff" in parsed || "regex" in parsed || "filePattern" in parsed) {
           return true;
         }
       }
@@ -518,7 +516,12 @@ export function parseToolInfo(msg: ClineMessage, workspaceRoot?: string): ClineT
     // Generate title based on tool type
     let title = toolType;
     if (data.path) {
-      title = `${toolType} ${data.path}`;
+      // For edits, a cleaner title helps Zed's native UI
+      if (toolType === "replace_in_file" || toolType === "write_to_file" || toolType === "apply_diff") {
+        title = `Edit ${path.basename(data.path)}`;
+      } else {
+        title = `${toolType} ${data.path}`;
+      }
     } else if (data.command) {
       title = `${toolType}: ${data.command}`;
     }
@@ -594,28 +597,154 @@ type ToolCallContent =
   | { type: "diff"; path: string; newText: string; oldText?: string | null };
 
 /**
+ * Parse results from search/replace extraction
+ */
+interface ParsedDiff {
+  oldText: string;
+  newText: string;
+  startIndex: number;
+  endIndex: number;
+}
+
+/**
+ * Extract all SEARCH/REPLACE blocks from text
+ * Handles variations in markers and same-line code
+ */
+function extractSearchReplaceBlocks(text: string): ParsedDiff[] {
+  const blocks: ParsedDiff[] = [];
+  // Flexible regex for standard and variant markers
+  // Group 1: Optional code on the same line as SEARCH
+  // Group 2: The rest of the SEARCH block
+  // Group 3: The REPLACE block
+  const pattern = /(?:^|\n)(?:-{3,}|<{7})\s*SEARCH\s*(.*?)\n([\s\S]*?)\n[=]{3,}\s*\n([\s\S]*?)\n(?:\+{3,}|>{7})\s*REPLACE/g;
+
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const firstLineSearch = match[1].trim();
+    const restSearch = match[2];
+    const newText = match[3];
+
+    blocks.push({
+      oldText: (firstLineSearch ? firstLineSearch + "\n" : "") + restSearch,
+      newText: newText,
+      startIndex: match.index,
+      endIndex: match.index + match[0].length,
+    });
+  }
+  return blocks;
+}
+
+/**
  * Build ToolCallContent array from parsed tool info
  */
 function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
   const result: ToolCallContent[] = [];
+  const foundDiffs: ToolCallContent[] = [];
 
-  // If we have a diff, include it as diff content
-  // The ACP format expects newText (and optionally oldText)
-  // Cline provides the diff string, so we include it as newText for display
-  if (toolInfo.diff && toolInfo.path) {
-    result.push({
-      type: "diff",
-      path: toolInfo.path,
-      newText: toolInfo.diff,
-    });
+  // 1. Check for granular search/replace in input fields (some MCP tools)
+  if (toolInfo.input && typeof toolInfo.input === "object") {
+    const input = toolInfo.input as Record<string, unknown>;
+
+    // Standard SEARCH/REPLACE in fields (used by some models)
+    if (input.search && input.replace && typeof input.search === "string" && typeof input.replace === "string") {
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path || "",
+        oldText: input.search,
+        newText: input.replace,
+      });
+    }
+
+    // Alternative field names (common in some MCP tools)
+    if (input.old_text && input.new_text && typeof input.old_text === "string" && typeof input.new_text === "string") {
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path || "",
+        oldText: input.old_text,
+        newText: input.new_text,
+      });
+    }
   }
 
-  // If we have text content (file contents, command output, etc.), include it
-  if (toolInfo.content) {
-    result.push({
-      type: "content",
-      content: { type: "text", text: toolInfo.content },
-    });
+  // 2. Check for full write_to_file logic
+  if (
+    (toolInfo.type === "write_to_file" || toolInfo.type === "insert_content") &&
+    toolInfo.input &&
+    typeof toolInfo.input === "object"
+  ) {
+    const input = toolInfo.input as Record<string, unknown>;
+    if (input.content && typeof input.content === "string" && toolInfo.path) {
+      foundDiffs.push({
+        type: "diff",
+        path: toolInfo.path,
+        newText: input.content, // oldText undefined implies total overwrite
+      });
+    }
+  }
+
+  // 3. Extract SEARCH/REPLACE blocks from 'diff' or 'content' field in replace_in_file/apply_diff
+  if ((toolInfo.type === "replace_in_file" || toolInfo.type === "apply_diff") && toolInfo.path) {
+    const diffSource = toolInfo.diff || toolInfo.content;
+    if (diffSource) {
+      const blocks = extractSearchReplaceBlocks(diffSource);
+      if (blocks.length > 0) {
+        for (const block of blocks) {
+          foundDiffs.push({
+            type: "diff",
+            path: toolInfo.path,
+            oldText: block.oldText,
+            newText: block.newText,
+          });
+        }
+      } else {
+        // Fallback: show the raw block if it's not standard SEARCH/REPLACE format
+        foundDiffs.push({
+          type: "diff",
+          path: toolInfo.path,
+          newText: diffSource,
+        });
+      }
+    }
+  }
+
+  // 4. Extract SEARCH/REPLACE blocks from generic 'content' field
+  // This handles models that explain their code inside the content field
+  let remainingContent: string | undefined = toolInfo.content;
+  if (remainingContent && typeof remainingContent === "string") {
+    const contentStr: string = remainingContent;
+    const blocks = extractSearchReplaceBlocks(contentStr);
+    if (blocks.length > 0) {
+      // Sort blocks from last to first
+      const sortedBlocks = [...blocks].sort((a, b) => b.startIndex - a.startIndex);
+      for (const block of sortedBlocks) {
+        foundDiffs.push({
+          type: "diff",
+          path: toolInfo.path || "file",
+          oldText: block.oldText,
+          newText: block.newText,
+        });
+        // Remove block from the thought text
+        const prefixStr: string = remainingContent!.substring(0, block.startIndex);
+        const suffixStr: string = remainingContent!.substring(block.endIndex);
+        remainingContent = prefixStr + "\n(Diff proposed below)\n" + suffixStr;
+      }
+    }
+  }
+
+  // Final Assembly
+  // CRITICAL: If we have diffs, we only send the diffs to ensure Zed promotes this
+  // ToolCall to the native editor diff UI. Any reasoning text is already
+  // being sent in the main message stream.
+  if (foundDiffs.length > 0) {
+    result.push(...foundDiffs);
+  } else {
+    // Only send text if there are no diffs
+    if (remainingContent && remainingContent.trim()) {
+      result.push({
+        type: "content",
+        content: { type: "text", text: remainingContent.trim() },
+      });
+    }
   }
 
   return result;
@@ -627,13 +756,12 @@ function buildToolCallContent(toolInfo: ClineToolInfo): ToolCallContent[] {
 function mapToolKind(
   toolType: string,
 ): "read" | "edit" | "execute" | "search" | "fetch" | "think" | "other" {
-  const kindMap: Record<
-    string,
-    "read" | "edit" | "execute" | "search" | "fetch" | "think" | "other"
-  > = {
+  const kindMap: Record<string, "read" | "edit" | "execute" | "search" | "fetch" | "think" | "other"> = {
     read_file: "read",
     write_to_file: "edit",
     replace_in_file: "edit",
+    apply_diff: "edit", // Support apply_diff specifically
+    insert_content: "edit", // Support insert_content specifically
     execute_command: "execute",
     search_files: "search",
     list_files: "search",
@@ -678,6 +806,9 @@ export function clineToolAskToAcpToolCall(
       rawInput: toolInfo.input,
       content,
       locations,
+      _meta: {
+        tool: toolInfo.type,
+      },
     },
   };
 }
@@ -686,10 +817,7 @@ export function clineToolAskToAcpToolCall(
  * Convert Cline command ask to ACP tool call notification (pending approval)
  * Command asks have raw command text, not JSON like tool asks
  */
-export function clineCommandAskToAcpToolCall(
-  msg: ClineMessage,
-  sessionId: string,
-): SessionNotification {
+export function clineCommandAskToAcpToolCall(msg: ClineMessage, sessionId: string): SessionNotification {
   const command = msg.text || "command";
 
   return {
@@ -872,10 +1000,7 @@ export function parseTaskProgressToPlanEntries(text: string): ClinePlanEntry[] {
 /**
  * Convert Cline task_progress message to ACP plan notification
  */
-export function clineTaskProgressToAcpPlan(
-  msg: ClineMessage,
-  sessionId: string,
-): SessionNotification | null {
+export function clineTaskProgressToAcpPlan(msg: ClineMessage, sessionId: string): SessionNotification | null {
   const text = msg.text || "";
   const entries = parseTaskProgressToPlanEntries(text);
 
@@ -982,12 +1107,7 @@ export function needsApproval(messages: ClineMessage[]): boolean {
   if (lastMessage.partial) return false;
 
   // These ask types require approval
-  const approvalTypes = [
-    ClineAsk.TOOL,
-    ClineAsk.COMMAND,
-    ClineAsk.BROWSER_ACTION_LAUNCH,
-    ClineAsk.USE_MCP_SERVER,
-  ];
+  const approvalTypes = [ClineAsk.TOOL, ClineAsk.COMMAND, ClineAsk.BROWSER_ACTION_LAUNCH, ClineAsk.USE_MCP_SERVER];
 
   return approvalTypes.includes(lastMessage.ask as ClineAsk);
 }
@@ -1011,12 +1131,8 @@ export function extractMessagesFromState(stateJson: string): ClineMessage[] {
       partial: msg.partial as boolean | undefined,
       images: msg.images as string[] | undefined,
       // Include the structured response fields
-      planModeResponse: msg.planModeResponse as
-        | { response: string; options: string[]; selected?: string }
-        | undefined,
-      askQuestion: msg.askQuestion as
-        | { question: string; options: string[]; selected?: string }
-        | undefined,
+      planModeResponse: msg.planModeResponse as { response: string; options: string[]; selected?: string } | undefined,
+      askQuestion: msg.askQuestion as { question: string; options: string[]; selected?: string } | undefined,
     }));
   } catch {
     return [];
@@ -1061,10 +1177,7 @@ export function extractMode(stateJson: string): "plan" | "act" {
 /**
  * Create a current_mode_update notification
  */
-export function createCurrentModeUpdate(
-  sessionId: string,
-  modeId: "plan" | "act",
-): SessionNotification {
+export function createCurrentModeUpdate(sessionId: string, modeId: "plan" | "act"): SessionNotification {
   return {
     sessionId,
     update: {
